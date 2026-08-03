@@ -17,6 +17,6 @@ RUN apk add --no-cache ca-certificates git
 
 COPY --from=builder out/queue-service /app/queue-service
 
-EXPOSE 50052
+EXPOSE 8080
 
-CMD ["./auth-service"]
+CMD ["./queue-service"]
