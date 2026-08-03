@@ -1,0 +1,356 @@
+openapi: 3.0.3
+info:
+  title: Queue Service API
+  description: >
+    API очереди на покупку товара (Авито хакатон, кейс Queue Service).
+    Описаны только эндпоинты Queue Service, участвующие в sequence-диаграмме
+    из `docs/user_story.md`. Вызовы к внешнему Order Service (создание заказа,
+    оплата) вне скоупа и не описаны.
+
+    Аутентификация везде подразумевается через существующий механизм
+    авторизации Авито (пользователь уже залогинен) — в спецификации опущена
+    для краткости.
+
+    API спроектировано в REST-стиле: ресурсы — существительные (`members`,
+    `rights`), действие определяется HTTP-методом, а не глаголом в пути.
+  version: "1.0.0"
+
+tags:
+  - name: queue
+    description: Членство пользователя в очереди на товар
+  - name: rights
+    description: Выданные права на покупку
+
+paths:
+  /queue/{product_id}/members:
+    post:
+      tags: [queue]
+      summary: Встать в очередь / получить право на товар
+      description: >
+        «Добавить меня в очередь на этот товар». Пользователь нажимает
+        «Купить» на странице товара и указывает желаемое количество. Backend
+        проверяет `available_units` (сколько единиц сейчас свободно, с учётом
+        уже выданных прав) относительно запрошенного количества и либо выдаёт
+        право немедленно, либо предлагает меньшее количество, либо ставит
+        пользователя в FIFO-очередь.
+
+
+        Если у пользователя уже есть активное членство в очереди на этот
+        товар (`QUEUED`/`RIGHT_ACTIVE`/`OFFER_PENDING`), повторный `POST`
+        идемпотентен — возвращается текущее состояние членства без изменений
+        (см. `docs/design_context.md`, п.2.1).
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 1
+                  description: >
+                    Сколько единиц товара пользователь хочет купить. Должно
+                    быть `1 <= quantity <= product_count`; больший запрос
+                    отклоняется как `400 Bad Request` ещё до входа в очередь.
+              example:
+                quantity: 5
+      responses:
+        '201':
+          description: >
+            Право выдано сразу / выдано предложение на меньшее количество /
+            пользователь встал в очередь — конкретный вариант определяется
+            полем `status`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/RightActive'
+                  - $ref: '#/components/schemas/OfferPending'
+                  - $ref: '#/components/schemas/Queued'
+              examples:
+                right_active:
+                  summary: available_units >= quantity и очередь пуста
+                  value:
+                    status: RIGHT_ACTIVE
+                    token: rgt_9f3a...
+                    expires_at: "2026-08-03T12:15:00Z"
+                    quantity: 5
+                offer_pending:
+                  summary: 0 < available_units < quantity, очередь пуста
+                  value:
+                    status: OFFER_PENDING
+                    available_quantity: 3
+                    expires_at: "2026-08-03T12:15:00Z"
+                queued:
+                  summary: available_units == 0, впереди есть другие
+                  value:
+                    status: QUEUED
+        '400':
+          description: quantity вне диапазона [1, product_count]
+        '409':
+          description: Товар распродан навсегда — рестокинг не поддерживается
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoldOut'
+              example:
+                status: SOLD_OUT
+
+  /queue/{product_id}/members/me:
+    get:
+      tags: [queue]
+      summary: Мой текущий статус в очереди на этот товар
+      description: >
+        Один и тот же ресурс можно как разово прочитать (обычный HTTP-запрос
+        — polling fallback), так и держать открытым через WebSocket-upgrade
+        для realtime-обновлений — именно так фронтенд получает push при
+        изменении статуса (`QUEUED → RIGHT_ACTIVE`/`OFFER_PENDING`, истечение
+        таймера, `SOLD_OUT`, `DECLINED`).
+
+
+        Для realtime-режима клиент отправляет заголовок `Upgrade: websocket`;
+        сервер переключает соединение на WS и присылает то же тело ответа
+        (см. схему ниже) при каждом изменении статуса, без необходимости
+        повторного polling.
+      x-websocket: true
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+        - name: Upgrade
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [websocket]
+          description: Наличие заголовка переключает соединение в realtime WS-режим.
+      responses:
+        '200':
+          description: >
+            Текущий статус членства (или очередной push-пакет в WS-режиме) —
+            конкретный вариант определяется полем `status`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/RightActive'
+                  - $ref: '#/components/schemas/OfferPending'
+                  - $ref: '#/components/schemas/Queued'
+                  - $ref: '#/components/schemas/SoldOut'
+                  - $ref: '#/components/schemas/Declined'
+                  - $ref: '#/components/schemas/Purchased'
+              examples:
+                right_active:
+                  summary: Право активно
+                  value:
+                    status: RIGHT_ACTIVE
+                    token: rgt_9f3a...
+                    expires_at: "2026-08-03T12:20:00Z"
+                    quantity: 5
+                offer_pending:
+                  summary: Доступно меньше, чем запрошено — ждём решения пользователя
+                  value:
+                    status: OFFER_PENDING
+                    available_quantity: 3
+                    expires_at: "2026-08-03T12:20:00Z"
+                queued:
+                  summary: В очереди (в т.ч. после истечения таймера предыдущего права/предложения)
+                  value:
+                    status: QUEUED
+                sold_out:
+                  summary: Товар закончился, пока пользователь был в очереди
+                  value:
+                    status: SOLD_OUT
+                declined:
+                  summary: Пользователь отказался от предложения либо не отреагировал вовремя
+                  value:
+                    status: DECLINED
+                purchased:
+                  summary: Право оплачено и использовано — финальное состояние
+                  value:
+                    status: PURCHASED
+        '404':
+          description: Пользователь ни разу не выполнял POST для этого product_id
+
+    patch:
+      tags: [queue]
+      summary: Принять предложение на меньшее количество
+      description: >
+        «Принять предложение, но на меньшее количество». Применимо только в
+        состоянии `OFFER_PENDING`. Переводит членство в `RIGHT_ACTIVE` с
+        указанным количеством и выдаёт токен.
+
+
+        Остаток (`available_quantity - quantity`) немедленно возвращается в
+        общий пул — если этого хватает следующему в очереди, он тут же
+        получает своё право/предложение.
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 1
+                  description: От 1 до available_quantity из предложения.
+              example:
+                quantity: 2
+      responses:
+        '200':
+          description: Право активно с указанным количеством
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RightActive'
+              example:
+                status: RIGHT_ACTIVE
+                token: rgt_9f3a...
+                expires_at: "2026-08-03T12:20:00Z"
+                quantity: 2
+
+    delete:
+      tags: [queue]
+      summary: Выйти из очереди / отказаться от активного права или предложения
+      description: >
+        «Удалить меня из очереди / отказаться от активного права или
+        предложения». Завершает участие пользователя в механике для этого
+        товара досрочно.
+
+
+        Если пользователь был в состоянии `OFFER_PENDING`, вслед за `204`
+        через WS уходит push `{ status: DECLINED }` — это финальное
+        состояние для пользователя, а удержанное количество возвращается в
+        общий пул.
+
+
+        Для состояний `QUEUED` и `RIGHT_ACTIVE` (полное количество) в MVP
+        фронтенд этот метод не вызывает (кнопки «выйти из очереди» нет — по
+        продуктовому решению добровольный выход не входит в основной
+        сценарий). Метод включён в контракт для полноты REST-ресурса и уже
+        реально используется для отказа от `OFFER_PENDING`.
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '204':
+          description: Членство завершено
+
+  /rights/{token}/events:
+    post:
+      tags: [rights]
+      summary: Сообщить о событии, связанном с правом (внутренний эндпоинт)
+      description: >
+        Внутренний эндпоинт: Order Service сообщает о событии, связанном с
+        правом (сейчас — только успешная оплата). Это событие, а не прямое
+        изменение статуса: Order Service не знает и не должен знать о
+        внутренней модели статусов Queue Service, он просто репортит факт.
+
+        Вызывается Order Service, не пользователем.
+
+        Эффект на стороне Queue Service:
+        - право переводится в `USED` и не может быть использовано повторно;
+        - `product_count` уменьшается на `quantity` этого права;
+        - если `product_count` дошёл до 0 и очередь пуста — товар помечается
+          `SOLD_OUT` для всех новых `POST /queue/{product_id}/members`.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          example: rgt_9f3a...
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, order_id]
+              properties:
+                event:
+                  type: string
+                  enum: [payment_succeeded]
+                order_id:
+                  type: string
+              example:
+                event: payment_succeeded
+                order_id: ord_555
+      responses:
+        '202':
+          description: Событие принято к обработке
+
+components:
+  parameters:
+    ProductId:
+      name: product_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    RightActive:
+      type: object
+      required: [status, token, expires_at, quantity]
+      properties:
+        status:
+          type: string
+          enum: [RIGHT_ACTIVE]
+        token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        quantity:
+          type: integer
+
+    OfferPending:
+      type: object
+      required: [status, available_quantity, expires_at]
+      properties:
+        status:
+          type: string
+          enum: [OFFER_PENDING]
+        available_quantity:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+
+    Queued:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [QUEUED]
+
+    SoldOut:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [SOLD_OUT]
+
+    Declined:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [DECLINED]
+
+    Purchased:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [PURCHASED]
