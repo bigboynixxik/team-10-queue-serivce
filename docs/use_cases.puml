@@ -1,0 +1,34 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Покупатель" as Customer
+
+rectangle "Авито Очередь" {
+    usecase "Проверить наличие очереди" as UC_CheckQueue
+    usecase "Встать в очередь" as UC_JoinQueue
+    usecase "Отслеживать статус в очереди" as UC_TrackStatus
+    usecase "Покинуть очередь" as UC_LeaveQueue
+    usecase "Перейти к оформлению заказа" as UC_Checkout
+    usecase "Проверить право на покупку" as UC_VerifyToken
+    usecase "Просмотреть похожие товары" as UC_ViewSimilar
+    usecase "Включить уведомления" as UC_EnableNotifications
+    usecase "Отключить уведомления" as UC_DisableNotifications
+
+    usecase "Выдать право на покупку" as UC_Grant
+    usecase "Аннулировать бронь по таймауту" as UC_Revoke
+    usecase "Закрыть очередь (Sold Out)" as UC_SoldOut
+}
+
+Customer --> UC_CheckQueue
+Customer --> UC_JoinQueue
+Customer --> UC_TrackStatus
+Customer --> UC_LeaveQueue
+Customer --> UC_Checkout
+Customer --> UC_EnableNotifications
+Customer --> UC_DisableNotifications
+
+UC_TrackStatus <.. UC_ViewSimilar : <<extend>>
+UC_Checkout ..> UC_VerifyToken : <<include>>
+
+@enduml
