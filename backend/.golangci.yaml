@@ -9,7 +9,7 @@ linters-settings:
   gocyclo:
     min-complexity: 15
   goimports:
-    local-prefixes: auth-service
+    local-prefixes: backend
   depguard:
     rules:
       models-layer:
