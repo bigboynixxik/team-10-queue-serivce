@@ -1,4 +1,3 @@
-// Package models holds the domain types shared by the transport and service layers.
 package models
 
 import "time"
