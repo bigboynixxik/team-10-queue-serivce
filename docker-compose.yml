@@ -1,0 +1,28 @@
+# Deployment of the Queue Service MVP (requirements.md, NFR-3).
+#
+# Only the API container is here so far. The business layer is the in-memory
+# mock, so the Redis and PostgreSQL containers from docs/c4_container.md are not
+# started yet — they arrive together with the real implementation.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: queue-service:local
+    container_name: queue-service
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    environment:
+      ENV: ${ENV:-local}
+      PORT: "8080"
+      RIGHT_TTL: ${RIGHT_TTL:-15m}
+      OFFER_TTL: ${OFFER_TTL:-2m}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
