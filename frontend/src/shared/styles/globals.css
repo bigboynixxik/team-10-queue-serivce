@@ -1,0 +1,5 @@
+@import url(./variabels.css);
+
+:root {
+  font-family: var(--f-family);
+}
