@@ -18,8 +18,11 @@ import (
 	"backend/pkg/logger"
 )
 
-// readHeaderTimeout guards against slow-header clients.
-const readHeaderTimeout = 10 * time.Second
+const (
+	// readHeaderTimeout guards against slow-header clients.
+	readHeaderTimeout = 10 * time.Second
+	envFile           = ".env"
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -29,7 +32,7 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load()
+	cfg, err := config.Load(envFile)
 	if err != nil {
 		return err
 	}
