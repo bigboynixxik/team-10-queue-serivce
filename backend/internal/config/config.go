@@ -21,8 +21,11 @@ type Config struct {
 	// PGDsn is the PostgreSQL connection string.
 	PGDsn string `env:"PG_DSN,required"`
 
-	// RedisAddr is the Redis instance address (host:port).
-	RedisAddr string `env:"REDIS_ADDR" envDefault:"redis:6379"`
+	RedisAddr        string        `env:"REDIS_ADDR" envDefault:"redis:6379"`
+	RedisPassword    string        `env:"REDIS_PASSWORD"`
+	RedisDB          int           `env:"REDIS_DB" envDefault:"0"`
+	RedisPoolSize    int           `env:"REDIS_POOL_SIZE" envDefault:"100"`
+	RedisDialTimeout time.Duration `env:"REDIS_DIAL_TIMEOUT" envDefault:"5s"`
 
 	// RightTTL is the lifetime of an issued purchase right before it expires.
 	RightTTL time.Duration `env:"RIGHT_TTL" envDefault:"15m"`
