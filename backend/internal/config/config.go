@@ -13,22 +13,31 @@ import (
 // Config holds everything the service needs to start and connect to infrastructure.
 type Config struct {
 	// Env selects the application environment (e.g., local, dev, prod).
-	Env string `env:"ENV" envDefault:"local"`
+	Env string `env:"APP_ENV" envDefault:"local"`
 
 	// Port is the HTTP port the REST API and WebSocket server listens on.
-	Port string `env:"PORT" envDefault:"8080"`
+	Port string `env:"APP_PORT" envDefault:"8080"`
 
 	// PGDsn is the PostgreSQL connection string.
 	PGDsn string `env:"PG_DSN,required"`
 
-	RedisAddr        string        `env:"REDIS_ADDR" envDefault:"redis:6379"`
-	RedisPassword    string        `env:"REDIS_PASSWORD"`
-	RedisDB          int           `env:"REDIS_DB" envDefault:"0"`
-	RedisPoolSize    int           `env:"REDIS_POOL_SIZE" envDefault:"100"`
+	// RedisAddr is the host and port of the Redis server.
+	RedisAddr string `env:"REDIS_ADDR" envDefault:"redis:6379"`
+
+	// RedisPassword is the authentication password for Redis (leave empty if none).
+	RedisPassword string `env:"REDIS_PASSWORD"`
+
+	// RedisDB selects the specific Redis logical database index.
+	RedisDB int `env:"REDIS_DB" envDefault:"0"`
+
+	// RedisPoolSize limits the maximum number of socket connections to Redis.
+	RedisPoolSize int `env:"REDIS_POOL_SIZE" envDefault:"100"`
+
+	// RedisDialTimeout is the maximum time to wait for a connection to be established.
 	RedisDialTimeout time.Duration `env:"REDIS_DIAL_TIMEOUT" envDefault:"5s"`
 
 	// RightTTL is the lifetime of an issued purchase right before it expires.
-	RightTTL time.Duration `env:"RIGHT_TTL" envDefault:"15m"`
+	RightTTL time.Duration `env:"RIGHT_TTL" envDefault:"4m"`
 
 	// OfferTTL is how long a partial offer waits for the user's decision.
 	OfferTTL time.Duration `env:"OFFER_TTL" envDefault:"2m"`
