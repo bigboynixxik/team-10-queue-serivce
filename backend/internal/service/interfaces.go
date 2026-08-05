@@ -15,6 +15,9 @@ type DurableRepo interface {
 	// SaveRight persists a newly issued purchase right.
 	SaveRight(ctx context.Context, right *models.Right) error
 
+	// GetRightByToken retrieves a right by its unique token.
+	GetRightByToken(ctx context.Context, token string) (*models.Right, error)
+
 	// UpsertMembership creates or updates a user's current status in the queue.
 	// It handles (product_id, user_id) conflicts gracefully.
 	UpsertMembership(ctx context.Context, membership *models.QueueMembership) error
@@ -22,6 +25,9 @@ type DurableRepo interface {
 	// UpdateStockAndRightTx atomically marks a right as USED and decrements the product_stock.
 	// This represents the final confirmation of a successful payment.
 	UpdateStockAndRightTx(ctx context.Context, token string, orderID string, quantity int) error
+
+	// SaveInitialStock persists the physical stock fetched from AvitoBackend.
+	SaveInitialStock(ctx context.Context, stock *models.ProductStock) error
 }
 
 // CacheRepo defines the contract for high-speed, concurrency-safe storage (Redis).
