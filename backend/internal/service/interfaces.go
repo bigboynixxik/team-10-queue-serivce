@@ -69,6 +69,15 @@ type CacheRepo interface {
 
 	// RemoveFromExpiryTimer removes a user's timer if they complete an action before expiration.
 	RemoveFromExpiryTimer(ctx context.Context, productID string, userID string) error
+
+	// RestoreAvailableUnits returns unused or rolled-back stock to the available pool.
+	RestoreAvailableUnits(ctx context.Context, productID string, quantity int) error
+
+	// GetFirstInQueue retrieves the first user ID from the queue without removing it.
+	GetFirstInQueue(ctx context.Context, productID string) (string, error)
+
+	// GetAndRemoveExpired atomically retrieves and removes items from the expiry timer that have timed out.
+	GetAndRemoveExpired(ctx context.Context, now time.Time) ([]string, error)
 }
 
 // AvitoClient defines the contract for interacting with the external AvitoBackend API.

@@ -55,6 +55,14 @@ var (
 		redis.call('ZADD', KEYS[2], seq, ARGV[1])
 		return seq
 	`)
+
+	getAndRemoveExpiredScript = redis.NewScript(`
+		local expired = redis.call('ZRANGE', KEYS[1], '-inf', ARGV[1], 'BYSCORE')
+		if #expired > 0 then
+			redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+		end
+		return expired
+	`)
 )
 
 // CacheRepo implements the service.CacheRepo interface using Redis.
@@ -328,4 +336,41 @@ func parseTimePtr(s string) *time.Time {
 		return nil
 	}
 	return &t
+}
+
+// RestoreAvailableUnits returns unused or rolled-back stock to the available pool.
+func (c *CacheRepo) RestoreAvailableUnits(ctx context.Context, productID string, quantity int) error {
+	key := fmt.Sprintf("stock:%s", productID)
+	err := c.client.HIncrBy(ctx, key, "available_units", int64(quantity)).Err()
+	if err != nil {
+		return fmt.Errorf("redis.CacheRepo.RestoreAvailableUnits: %w", err)
+	}
+	return nil
+}
+
+// GetFirstInQueue retrieves the first user ID from the queue without removing it.
+func (c *CacheRepo) GetFirstInQueue(ctx context.Context, productID string) (string, error) {
+	key := fmt.Sprintf("queue:%s", productID)
+
+	res, err := c.client.ZRange(ctx, key, 0, 0).Result()
+	if err != nil {
+		return "", fmt.Errorf("redis.CacheRepo.GetFirstInQueue: %w", err)
+	}
+	if len(res) == 0 {
+		return "", models.ErrTokenNotFound
+	}
+
+	return res[0], nil
+}
+
+// GetAndRemoveExpired atomically retrieves and removes items from the expiry timer that have timed out.
+func (c *CacheRepo) GetAndRemoveExpired(ctx context.Context, now time.Time) ([]string, error) {
+	score := strconv.FormatInt(now.Unix(), 10)
+
+	res, err := getAndRemoveExpiredScript.Run(ctx, c.client, []string{"expiring:rights"}, score).StringSlice()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("redis.CacheRepo.GetAndRemoveExpired execute script: %w", err)
+	}
+
+	return res, nil
 }
