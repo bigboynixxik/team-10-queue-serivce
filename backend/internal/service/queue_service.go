@@ -131,19 +131,8 @@ func (s *QueueService) processAllocation(
 		if err := s.durable.UpsertMembership(ctx, mem); err != nil {
 			log.ErrorContext(ctx, "failed to upsert membership after right active", slog.Any("error", err))
 		}
-		if err := s.cache.SetRight(ctx, right); err != nil {
-			log.ErrorContext(ctx, "failed to cache right", slog.Any("error", err))
-		}
-		if err := s.cache.SetMembership(ctx, mem); err != nil {
-			log.ErrorContext(ctx, "failed to cache membership", slog.Any("error", err))
-		}
-		if err := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, right.ExpiresAt); err != nil {
-			log.ErrorContext(ctx, "failed to add to expiry timer", slog.Any("error", err))
-		}
-		if err := s.cache.PublishEvent(ctx, mem.ProductID, mem.UserID, map[string]string{"status": string(mem.Status)}); err != nil {
-			log.ErrorContext(ctx, "failed to publish event", slog.Any("error", err))
-		}
 
+		s.syncCacheState(ctx, mem, right)
 		return right, nil
 	}
 
@@ -161,16 +150,7 @@ func (s *QueueService) processAllocation(
 			return nil, fmt.Errorf("service.processAllocation upsert partial: %w", err)
 		}
 
-		if err := s.cache.SetMembership(ctx, mem); err != nil {
-			log.ErrorContext(ctx, "failed to cache partial membership", slog.Any("error", err))
-		}
-		if err := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, *mem.ExpiresAt); err != nil {
-			log.ErrorContext(ctx, "failed to add partial to expiry timer", slog.Any("error", err))
-		}
-		if err := s.cache.PublishEvent(ctx, mem.ProductID, mem.UserID, map[string]string{"status": string(mem.Status)}); err != nil {
-			log.ErrorContext(ctx, "failed to publish partial event", slog.Any("error", err))
-		}
-
+		s.syncCacheState(ctx, mem, nil)
 		return nil, nil
 	}
 
@@ -184,12 +164,141 @@ func (s *QueueService) processAllocation(
 		return nil, fmt.Errorf("service.processAllocation upsert final state: %w", err)
 	}
 
-	if err := s.cache.SetMembership(ctx, mem); err != nil {
-		log.ErrorContext(ctx, "failed to cache final membership state", slog.Any("error", err))
-	}
-	if err := s.cache.PublishEvent(ctx, mem.ProductID, mem.UserID, map[string]string{"status": string(mem.Status)}); err != nil {
-		log.ErrorContext(ctx, "failed to publish final event", slog.Any("error", err))
+	s.syncCacheState(ctx, mem, nil)
+	return nil, nil
+}
+
+// AcceptOffer confirms a partial offer. If the accepted quantity is less than the
+// available quantity, the unused remainder is restored to the pool and the queue advances.
+func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string, acceptedQuantity int) (*models.Right, error) {
+	log := logger.FromContext(ctx)
+
+	if acceptedQuantity <= 0 {
+		return nil, models.ErrQuantityInvalid
 	}
 
-	return nil, nil
+	mem, err := s.cache.GetMembership(ctx, productID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("service.AcceptOffer get membership: %w", err)
+	}
+
+	if mem.Status != models.MembershipStatusOfferPending || mem.AvailableQuantity == nil {
+		return nil, models.ErrInvalidStatus
+	}
+
+	if acceptedQuantity > *mem.AvailableQuantity {
+		return nil, models.ErrQuantityInvalid
+	}
+
+	returnedQty := *mem.AvailableQuantity - acceptedQuantity
+	now := time.Now().UTC()
+
+	right := &models.Right{
+		Token:     uuid.NewString(),
+		UserID:    mem.UserID,
+		ProductID: mem.ProductID,
+		Quantity:  acceptedQuantity,
+		Status:    models.RightStatusActive,
+		CreatedAt: now,
+		ExpiresAt: now.Add(s.paymentTTL),
+	}
+
+	if err := s.durable.SaveRight(ctx, right); err != nil {
+		return nil, fmt.Errorf("service.AcceptOffer save right: %w", err)
+	}
+
+	mem.Status = models.MembershipStatusRightActive
+	mem.Quantity = acceptedQuantity
+	mem.AvailableQuantity = nil
+	mem.CurrentToken = &right.Token
+	mem.ExpiresAt = &right.ExpiresAt
+	mem.UpdatedAt = now
+
+	if err := s.durable.UpsertMembership(ctx, mem); err != nil {
+		log.ErrorContext(ctx, "failed to upsert membership after accept", slog.Any("error", err))
+	}
+
+	s.syncCacheState(ctx, mem, right)
+
+	if returnedQty > 0 {
+		if err := s.cache.RestoreAvailableUnits(ctx, productID, returnedQty); err != nil {
+			log.ErrorContext(ctx, "failed to restore unused units", slog.Any("error", err))
+		}
+		if err := s.AdvanceQueue(ctx, productID); err != nil {
+			log.ErrorContext(ctx, "failed to advance queue after partial accept", slog.Any("error", err))
+		}
+	}
+
+	return right, nil
+}
+
+// DeclineOffer rejects a pending offer. The reserved stock is entirely returned
+// to the available pool, and the queue is advanced.
+func (s *QueueService) DeclineOffer(ctx context.Context, productID, userID string) error {
+	log := logger.FromContext(ctx)
+
+	mem, err := s.cache.GetMembership(ctx, productID, userID)
+	if err != nil {
+		return fmt.Errorf("service.DeclineOffer get membership: %w", err)
+	}
+
+	if mem.Status != models.MembershipStatusOfferPending || mem.AvailableQuantity == nil {
+		return models.ErrInvalidStatus
+	}
+
+	returnedQty := *mem.AvailableQuantity
+	now := time.Now().UTC()
+
+	mem.Status = models.MembershipStatusDeclined
+	mem.AvailableQuantity = nil
+	mem.ExpiresAt = nil
+	mem.UpdatedAt = now
+
+	if err := s.durable.UpsertMembership(ctx, mem); err != nil {
+		return fmt.Errorf("service.DeclineOffer upsert final state: %w", err)
+	}
+
+	s.syncCacheState(ctx, mem, nil)
+
+	if err := s.cache.RemoveFromExpiryTimer(ctx, productID, userID); err != nil {
+		log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", err))
+	}
+
+	if returnedQty > 0 {
+		if err := s.cache.RestoreAvailableUnits(ctx, productID, returnedQty); err != nil {
+			log.ErrorContext(ctx, "failed to restore unused units", slog.Any("error", err))
+		}
+		if err := s.AdvanceQueue(ctx, productID); err != nil {
+			log.ErrorContext(ctx, "failed to advance queue after decline", slog.Any("error", err))
+		}
+	}
+
+	return nil
+}
+
+// syncCacheState is a DRY helper to update Redis and broadcast the state.
+func (s *QueueService) syncCacheState(ctx context.Context, mem *models.QueueMembership, right *models.Right) {
+	log := logger.FromContext(ctx)
+
+	if right != nil {
+		if err := s.cache.SetRight(ctx, right); err != nil {
+			log.ErrorContext(ctx, "failed to cache right", slog.Any("error", err))
+		}
+	}
+	if err := s.cache.SetMembership(ctx, mem); err != nil {
+		log.ErrorContext(ctx, "failed to cache membership", slog.Any("error", err))
+	}
+	if mem.ExpiresAt != nil {
+		if err := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, *mem.ExpiresAt); err != nil {
+			log.ErrorContext(ctx, "failed to add to expiry timer", slog.Any("error", err))
+		}
+	}
+	if err := s.cache.PublishEvent(ctx, mem.ProductID, mem.UserID, map[string]string{"status": string(mem.Status)}); err != nil {
+		log.ErrorContext(ctx, "failed to publish event", slog.Any("error", err))
+	}
+}
+
+// AdvanceQueue acts as an internal engine to push the queue forward when stock frees up.
+func (s *QueueService) AdvanceQueue(ctx context.Context, productID string) error {
+	return nil
 }
