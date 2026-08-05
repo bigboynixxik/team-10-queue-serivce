@@ -182,12 +182,16 @@ func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string
 		return nil, fmt.Errorf("service.AcceptOffer get membership: %w", err)
 	}
 
+	if mem.ExpiresAt != nil && time.Now().UTC().After(*mem.ExpiresAt) {
+		return nil, models.ErrTokenExpired
+	}
+
 	if mem.Status != models.MembershipStatusOfferPending || mem.AvailableQuantity == nil {
 		return nil, models.ErrInvalidStatus
 	}
 
 	if acceptedQuantity > *mem.AvailableQuantity {
-		return nil, models.ErrQuantityInvalid
+		return nil, models.ErrQuantityExceeded
 	}
 
 	returnedQty := *mem.AvailableQuantity - acceptedQuantity
@@ -240,6 +244,10 @@ func (s *QueueService) DeclineOffer(ctx context.Context, productID, userID strin
 	mem, err := s.cache.GetMembership(ctx, productID, userID)
 	if err != nil {
 		return fmt.Errorf("service.DeclineOffer get membership: %w", err)
+	}
+
+	if mem.ExpiresAt != nil && time.Now().UTC().After(*mem.ExpiresAt) {
+		return models.ErrTokenExpired
 	}
 
 	if mem.Status != models.MembershipStatusOfferPending || mem.AvailableQuantity == nil {
