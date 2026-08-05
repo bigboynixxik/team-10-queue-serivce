@@ -33,11 +33,17 @@ type DurableRepo interface {
 // CacheRepo defines the contract for high-speed, concurrency-safe storage (Redis).
 // It acts as the hot-path and handles race conditions via atomic operations (Lua).
 type CacheRepo interface {
-	// TryAllocate attempts to reserve the requested quantity.
-	// Returns the allocated quantity, available partial quantity, or an error.
-	TryAllocate(ctx context.Context, productID string, quantity int) (allocated int, available int, err error)
+	// InitStock initializes the product stock in the cache if it doesn't already exist.
+	InitStock(ctx context.Context, productID string, totalStock int) error
 
-	// Enqueue places a user at the end of the FIFO queue.
+	// TryAllocate attempts to reserve the requested quantity using a Lua script.
+	// It returns the allocated quantity, any available partial quantity, and a soldOut flag.
+	TryAllocate(ctx context.Context, productID string, quantity int) (allocated int, available int, soldOut bool, err error)
+
+	// CommitPurchase decrements the physical product_count in the cache after a successful payment.
+	CommitPurchase(ctx context.Context, productID string, quantity int) error
+
+	// Enqueue places a user at the end of the FIFO queue using a monotonic counter.
 	Enqueue(ctx context.Context, productID string, userID string) error
 
 	// RemoveFromQueue completely removes a user from the product's queue.
@@ -49,11 +55,20 @@ type CacheRepo interface {
 	// GetMembership retrieves the cached state of a user.
 	GetMembership(ctx context.Context, productID string, userID string) (*models.QueueMembership, error)
 
+	// SetRight caches an issued right for fast validation before checkout.
+	SetRight(ctx context.Context, right *models.Right) error
+
+	// GetRight retrieves a cached right by its token.
+	GetRight(ctx context.Context, token string) (*models.Right, error)
+
 	// PublishEvent broadcasts a status change to connected WebSocket clients.
 	PublishEvent(ctx context.Context, productID string, userID string, payload interface{}) error
 
-	// AddToExpiryTimer sets up a background tracking for a time-bound right or offer.
+	// AddToExpiryTimer sets up background tracking for a time-bound right or offer.
 	AddToExpiryTimer(ctx context.Context, productID string, userID string, expiresAt time.Time) error
+
+	// RemoveFromExpiryTimer removes a user's timer if they complete an action before expiration.
+	RemoveFromExpiryTimer(ctx context.Context, productID string, userID string) error
 }
 
 // AvitoClient defines the contract for interacting with the external AvitoBackend API.
