@@ -313,3 +313,69 @@ func (s *CacheTestSuite) TestExpiryTimers() {
 func TestCacheTestSuite(t *testing.T) {
 	suite.Run(t, new(CacheTestSuite))
 }
+
+func (s *CacheTestSuite) TestRestoreAvailableUnits() {
+	err := s.repo.InitStock(s.ctx, "prod-restore", 10)
+	require.NoError(s.T(), err)
+
+	alloc, _, _, err := s.repo.TryAllocate(s.ctx, "prod-restore", 3)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 3, alloc)
+
+	err = s.repo.RestoreAvailableUnits(s.ctx, "prod-restore", 3)
+	require.NoError(s.T(), err)
+
+	res, err := s.client.HGetAll(s.ctx, "stock:prod-restore").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "10", res["available_units"])
+	require.Equal(s.T(), "10", res["product_count"])
+}
+
+func (s *CacheTestSuite) TestGetFirstInQueue() {
+	_, err := s.repo.GetFirstInQueue(s.ctx, "prod-empty")
+	require.ErrorIs(s.T(), err, models.ErrTokenNotFound)
+
+	err = s.repo.Enqueue(s.ctx, "prod-first", "user-1")
+	require.NoError(s.T(), err)
+
+	err = s.repo.Enqueue(s.ctx, "prod-first", "user-2")
+	require.NoError(s.T(), err)
+
+	first, err := s.repo.GetFirstInQueue(s.ctx, "prod-first")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "user-1", first)
+
+	count, err := s.client.ZCard(s.ctx, "queue:prod-first").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(2), count)
+}
+
+func (s *CacheTestSuite) TestGetAndRemoveExpired() {
+	now := time.Now().UTC()
+	past1 := now.Add(-2 * time.Hour)
+	past2 := now.Add(-1 * time.Hour)
+	future := now.Add(1 * time.Hour)
+
+	err := s.repo.AddToExpiryTimer(s.ctx, "prod-exp", "user-old1", past1)
+	require.NoError(s.T(), err)
+
+	err = s.repo.AddToExpiryTimer(s.ctx, "prod-exp", "user-old2", past2)
+	require.NoError(s.T(), err)
+
+	err = s.repo.AddToExpiryTimer(s.ctx, "prod-exp", "user-future", future)
+	require.NoError(s.T(), err)
+
+	expired, err := s.repo.GetAndRemoveExpired(s.ctx, now)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), expired, 2)
+	require.Contains(s.T(), expired, "prod-exp:user-old1")
+	require.Contains(s.T(), expired, "prod-exp:user-old2")
+
+	count, err := s.client.ZCard(s.ctx, "expiring:rights").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(1), count)
+
+	remaining, err := s.client.ZRange(s.ctx, "expiring:rights", 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "prod-exp:user-future", remaining[0])
+}
