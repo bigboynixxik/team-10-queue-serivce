@@ -88,8 +88,7 @@ func (s *QueueServiceTestSuite) TestJoinQueue_FullAllocation_Rollback() {
 func (s *QueueServiceTestSuite) TestJoinQueue_PartialAllocation() {
 	s.mockJoinQueueBase(2, 5, 0, 2, false, nil)
 
-	avail := 2
-	s.mockDurableUpsert(models.MembershipStatusOfferPending, &avail)
+	s.mockDurableUpsert(models.MembershipStatusOfferPending, ptr(2))
 	s.mockSyncCacheState(models.MembershipStatusOfferPending, false, true)
 
 	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 5)

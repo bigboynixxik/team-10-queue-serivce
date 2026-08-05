@@ -81,6 +81,21 @@ func (s *QueueServiceTestSuite) mockDurableUpsert(status models.MembershipStatus
 	})).Return(nil)
 }
 
+// mockMembershipFetch DRY helper to mock a specific membership state retrieval.
+func (s *QueueServiceTestSuite) mockMembershipFetch(status models.MembershipStatus, avail *int) {
+	mem := &models.QueueMembership{
+		ProductID:         "prod-1",
+		UserID:            "user-1",
+		Status:            status,
+		AvailableQuantity: avail,
+	}
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
+}
+
+func ptr[T any](v T) *T {
+	return &v
+}
+
 // TestQueueServiceSuite acts as the entry point for running the test suite.
 func TestQueueServiceSuite(t *testing.T) {
 	suite.Run(t, new(QueueServiceTestSuite))
