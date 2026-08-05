@@ -49,6 +49,31 @@ services:
       retries: 3
       start_period: 5s
 
+  frontend:
+    build:
+      context: frontend
+      dockerfile: docker/Dockerfile.prod
+      args:
+        # Baked into the bundle: the browser talks to nginx, never to :8080.
+        PUBLIC_API_BASE_URL: /api
+    image: queue-frontend:local
+    container_name: queue-frontend
+    restart: unless-stopped
+    environment:
+      # Substituted into nginx/templates/default.conf.template on startup.
+      BACKEND_ORIGIN: http://backend:8080
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
 volumes:
   pgdata:
   redisdata:
