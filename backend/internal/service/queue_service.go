@@ -534,3 +534,79 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 
 	return nil
 }
+
+// ProcessExpirations scans for expired offers or payment rights, rolls back their stock,
+// updates their membership status, and advances the queue for each affected product.
+func (s *QueueService) ProcessExpirations(ctx context.Context) error {
+	log := logger.FromContext(ctx)
+	now := time.Now().UTC()
+
+	expiredKeys, err := s.cache.GetAndRemoveExpired(ctx, now)
+	if err != nil {
+		return fmt.Errorf("service.ProcessExpirations fetch expired: %w", err)
+	}
+
+	if len(expiredKeys) == 0 {
+		return nil
+	}
+
+	for _, key := range expiredKeys {
+		productID, userID, found := parseExpiredKey(key)
+		if !found {
+			log.ErrorContext(ctx, "malformed expired key format", slog.String("key", key))
+			continue
+		}
+
+		mem, err := s.cache.GetMembership(ctx, productID, userID)
+		if err != nil {
+			log.ErrorContext(ctx, "failed to get membership for expired item", slog.Any("error", err), slog.String("key", key))
+			continue
+		}
+
+		// Если пользователь уже оплатил или сам отменил, таймер неактуален
+		if mem.Status != models.MembershipStatusOfferPending && mem.Status != models.MembershipStatusRightActive {
+			continue
+		}
+
+		returnedQty := 0
+		if mem.Status == models.MembershipStatusOfferPending && mem.AvailableQuantity != nil {
+			returnedQty = *mem.AvailableQuantity
+		} else if mem.Status == models.MembershipStatusRightActive {
+			returnedQty = mem.Quantity
+		}
+
+		mem.Status = models.MembershipStatusDeclined // Используем статус сброса/истечения
+		mem.AvailableQuantity = nil
+		mem.ExpiresAt = nil
+		mem.UpdatedAt = now
+
+		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
+			log.ErrorContext(ctx, "failed to upsert expired membership", slog.Any("error", errUpsert), slog.String("user_id", userID))
+			continue
+		}
+
+		s.syncCacheState(ctx, mem, nil)
+
+		if returnedQty > 0 {
+			if errRestore := s.cache.RestoreAvailableUnits(ctx, productID, returnedQty); errRestore != nil {
+				log.ErrorContext(ctx, "failed to restore units on expiration", slog.Any("error", errRestore))
+			}
+		}
+
+		if errAdvance := s.AdvanceQueue(ctx, productID); errAdvance != nil {
+			log.ErrorContext(ctx, "failed to advance queue after expiration", slog.Any("error", errAdvance), slog.String("product_id", productID))
+		}
+	}
+
+	return nil
+}
+
+// parseExpiredKey is a small helper to split the "productID:userID" string.
+func parseExpiredKey(key string) (string, string, bool) {
+	for i := 0; i < len(key); i++ {
+		if key[i] == ':' {
+			return key[:i], key[i+1:], true
+		}
+	}
+	return "", "", false
+}
