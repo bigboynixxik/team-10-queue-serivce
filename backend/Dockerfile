@@ -1,25 +1,27 @@
 FROM golang:1.26.4-alpine AS builder
 
 WORKDIR /src
-RUN apk add --no-cache ca-certificates git
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/queue-service ./cmd/api/main.go
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/queue-service ./cmd/api
 
 FROM alpine:3.21
 
-ARG APP_PORT=8080
-ENV APP_PORT=${APP_PORT}
+RUN apk add --no-cache ca-certificates \
+    && adduser -D -u 10001 app
 
 WORKDIR /app
-RUN apk add --no-cache ca-certificates git
+COPY --from=builder /out/queue-service /app/queue-service
 
-COPY --from=builder out/queue-service /app/queue-service
+USER app
 
-EXPOSE ${APP_PORT}
+EXPOSE 8080
 
 CMD ["./queue-service"]
