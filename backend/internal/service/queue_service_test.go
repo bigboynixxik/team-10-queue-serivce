@@ -52,6 +52,9 @@ func (s *QueueServiceTestSuite) mockJoinQueueBase(stock, reqQty, alloc, avail in
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(nil, models.ErrTokenNotFound)
 	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(stock, nil)
 	s.mockCache.EXPECT().InitStock(s.ctx, "prod-1", stock).Return(nil)
+
+	s.mockDurable.EXPECT().SaveInitialStock(s.ctx, gomock.Any()).Return(nil)
+
 	s.mockCache.EXPECT().TryAllocate(s.ctx, "prod-1", reqQty).Return(alloc, avail, soldOut, allocErr)
 }
 

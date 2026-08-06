@@ -28,6 +28,30 @@ func (s *QueueServiceTestSuite) TestJoinQueue_Idempotency() {
 	assert.Equal(s.T(), existingMem, mem)
 }
 
+// TestJoinQueue_Idempotency_RightActive verifies that if a user is already in RIGHT_ACTIVE state,
+// the method fetches their existing token from the cache and returns it without side effects.
+func (s *QueueServiceTestSuite) TestJoinQueue_Idempotency_RightActive() {
+	token := "existing-token-123"
+	existingMem := &models.QueueMembership{
+		ProductID:    "prod-1",
+		UserID:       "user-1",
+		Status:       models.MembershipStatusRightActive,
+		CurrentToken: &token,
+	}
+	existingRight := &models.Right{
+		Token: token,
+	}
+
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(existingMem, nil)
+	s.mockCache.EXPECT().GetRight(s.ctx, token).Return(existingRight, nil)
+
+	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)
+
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), existingMem, mem)
+	assert.Equal(s.T(), existingRight, right)
+}
+
 func (s *QueueServiceTestSuite) TestJoinQueue_MembershipFetchError() {
 	unexpectedErr := errors.New("redis timeout")
 	s.mockCache.EXPECT().
