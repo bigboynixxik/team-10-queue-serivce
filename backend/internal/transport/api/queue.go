@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"backend/internal/models"
 	"backend/internal/transport/mw"
 )
 
@@ -24,6 +25,13 @@ func (h *QueueHandler) join(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := newMembershipResponse(membership)
+
+	// The service reports a sold-out product as a status rather than an error,
+	// but the contract answers it with 409 — nothing was created.
+	if resp.Status == models.MembershipStatusSoldOut {
+		writeJSON(w, r, http.StatusConflict, membershipResponse{Status: models.MembershipStatusSoldOut})
+		return
+	}
 
 	// A right issued straight away may not be reflected in the membership the
 	// service returned, so the token comes from the right itself.
