@@ -48,17 +48,13 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 	if quantity <= 0 {
 		return nil, nil, models.ErrQuantityInvalid
 	}
-	existingMem, err := s.cache.GetMembership(ctx, productID, userID)
-	if err == nil && existingMem != nil {
-		if existingMem.Status == models.MembershipStatusRightActive && existingMem.CurrentToken != nil {
-			right, _ := s.cache.GetRight(ctx, *existingMem.CurrentToken)
-			return existingMem, right, nil
-		}
-		if existingMem.Status == models.MembershipStatusQueued || existingMem.Status == models.MembershipStatusOfferPending {
-			return existingMem, nil, nil
-		}
-	} else if err != nil && !errors.Is(err, models.ErrTokenNotFound) {
-		return nil, nil, fmt.Errorf("service.JoinQueue check membership: %w", err)
+
+	mem, right, isHandled, errIdemp := s.checkIdempotency(ctx, productID, userID)
+	if errIdemp != nil {
+		return nil, nil, fmt.Errorf("service.JoinQueue: %w", errIdemp)
+	}
+	if isHandled {
+		return mem, right, nil
 	}
 
 	totalStock, err := s.avito.GetInitialStock(ctx, productID)
@@ -69,14 +65,15 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 	if errInit := s.cache.InitStock(ctx, productID, totalStock); errInit != nil {
 		log.WarnContext(ctx, "failed to initialize stock in cache", slog.Any("error", errInit))
 	}
+
 	stockModel := &models.ProductStock{
 		ProductID:    productID,
 		TotalStock:   totalStock,
 		ProductCount: totalStock,
 		UpdatedAt:    time.Now().UTC(),
 	}
-	if err := s.durable.SaveInitialStock(ctx, stockModel); err != nil {
-		log.ErrorContext(ctx, "CRITICAL: failed to save initial stock to db", slog.Any("error", err))
+	if errSave := s.durable.SaveInitialStock(ctx, stockModel); errSave != nil {
+		log.ErrorContext(ctx, "CRITICAL: failed to save initial stock to db", slog.Any("error", errSave))
 	}
 
 	alloc, avail, soldOut, errAlloc := s.cache.TryAllocate(ctx, productID, quantity)
@@ -84,25 +81,49 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 		return nil, nil, fmt.Errorf("service.JoinQueue try allocate: %w", errAlloc)
 	}
 
-	mem := &models.QueueMembership{
+	newMem := &models.QueueMembership{
 		ProductID: productID,
 		UserID:    userID,
 		Quantity:  quantity,
 		CreatedAt: time.Now().UTC(),
 	}
 
-	right, errProcess := s.processAllocation(ctx, mem, alloc, avail, soldOut)
+	allocatedRight, errProcess := s.processAllocation(ctx, newMem, alloc, avail, soldOut)
 	if errProcess != nil {
 		return nil, nil, errProcess
 	}
 
-	if mem.Status == models.MembershipStatusQueued {
+	if newMem.Status == models.MembershipStatusQueued {
 		if errEnq := s.cache.Enqueue(ctx, productID, userID); errEnq != nil {
 			log.ErrorContext(ctx, "failed to enqueue user", slog.Any("error", errEnq))
 		}
 	}
 
-	return mem, right, nil
+	return newMem, allocatedRight, nil
+}
+
+// checkIdempotency is a helper method to reduce cyclomatic complexity in JoinQueue.
+// It verifies if a user is already in the queue or has an active right, returning
+// early if no further processing is needed.
+func (s *QueueService) checkIdempotency(ctx context.Context, productID, userID string) (*models.QueueMembership, *models.Right, bool, error) {
+	existingMem, err := s.cache.GetMembership(ctx, productID, userID)
+	if err != nil {
+		if errors.Is(err, models.ErrTokenNotFound) {
+			return nil, nil, false, nil
+		}
+		return nil, nil, false, fmt.Errorf("check membership: %w", err)
+	}
+
+	if existingMem.Status == models.MembershipStatusRightActive && existingMem.CurrentToken != nil {
+		right, _ := s.cache.GetRight(ctx, *existingMem.CurrentToken)
+		return existingMem, right, true, nil
+	}
+
+	if existingMem.Status == models.MembershipStatusQueued || existingMem.Status == models.MembershipStatusOfferPending {
+		return existingMem, nil, true, nil
+	}
+
+	return nil, nil, false, nil
 }
 
 // processAllocation encapsulates the state machine transition logic.
@@ -320,8 +341,6 @@ func (s *QueueService) syncCacheState(ctx context.Context, mem *models.QueueMemb
 // It intentionally ignores the boolean soldOut flag returned by PopAndAllocate,
 // relying exclusively on the strict models.MembershipStatus for state transitions.
 func (s *QueueService) AdvanceQueue(ctx context.Context, productID string) error {
-	log := logger.FromContext(ctx)
-
 	for {
 		uid, alloc, avail, _, status, score, err := s.cache.PopAndAllocate(ctx, productID)
 		if err != nil {
@@ -338,69 +357,78 @@ func (s *QueueService) AdvanceQueue(ctx context.Context, productID string) error
 			continue
 		}
 
-		mem, err := s.cache.GetMembership(ctx, productID, uid)
-		if err != nil {
-			s.rollbackAdvance(ctx, productID, uid, alloc+avail, score)
-			log.ErrorContext(ctx, "failed to get membership for advanced user", slog.Any("error", err), slog.String("user_id", uid))
-			continue
-		}
-
-		now := time.Now().UTC()
-		mem.UpdatedAt = now
-
-		if status == models.MembershipStatusRightActive {
-			right := &models.Right{
-				Token:     uuid.NewString(),
-				UserID:    mem.UserID,
-				ProductID: mem.ProductID,
-				Quantity:  alloc,
-				Status:    models.RightStatusActive,
-				CreatedAt: now,
-				ExpiresAt: now.Add(s.paymentTTL),
-			}
-
-			if err := s.durable.SaveRight(ctx, right); err != nil {
-				s.rollbackAdvance(ctx, productID, uid, alloc, score)
-				log.ErrorContext(ctx, "failed to save right in advance queue", slog.Any("error", err))
-				continue
-			}
-
-			mem.Status = models.MembershipStatusRightActive
-			mem.CurrentToken = &right.Token
-			mem.ExpiresAt = &right.ExpiresAt
-
-			if err := s.durable.UpsertMembership(ctx, mem); err != nil {
-				log.ErrorContext(ctx, "failed to upsert membership", slog.Any("error", err))
-			}
-			s.syncCacheState(ctx, mem, right)
-
-		} else if status == models.MembershipStatusOfferPending {
-			mem.Status = models.MembershipStatusOfferPending
-			mem.AvailableQuantity = &avail
-
-			exp := new(time.Time)
-			*exp = now.Add(s.offerTTL)
-			mem.ExpiresAt = exp
-
-			if err := s.durable.UpsertMembership(ctx, mem); err != nil {
-				s.rollbackAdvance(ctx, productID, uid, avail, score)
-				log.ErrorContext(ctx, "failed to upsert partial membership", slog.Any("error", err))
-				continue
-			}
-			s.syncCacheState(ctx, mem, nil)
-
-		} else {
-			mem.Status = models.MembershipStatusSoldOut
-			if err := s.durable.UpsertMembership(ctx, mem); err != nil {
-				s.rollbackAdvance(ctx, productID, uid, 0, score)
-				log.ErrorContext(ctx, "failed to upsert sold_out membership", slog.Any("error", err))
-				continue
-			}
-			s.syncCacheState(ctx, mem, nil)
-		}
+		s.applyAdvanceStep(ctx, productID, uid, alloc, avail, status, score)
 	}
 
 	return nil
+}
+
+// applyAdvanceStep processes a single iteration of the queue advancement logic,
+// updating the durable store and cache based on the user's new status.
+func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid string, alloc, avail int, status models.MembershipStatus, score float64) {
+	log := logger.FromContext(ctx)
+
+	mem, err := s.cache.GetMembership(ctx, productID, uid)
+	if err != nil {
+		s.rollbackAdvance(ctx, productID, uid, alloc+avail, score)
+		log.ErrorContext(ctx, "failed to get membership for advanced user", slog.Any("error", err), slog.String("user_id", uid))
+		return
+	}
+
+	now := time.Now().UTC()
+	mem.UpdatedAt = now
+
+	switch status {
+	case models.MembershipStatusRightActive:
+		right := &models.Right{
+			Token:     uuid.NewString(),
+			UserID:    mem.UserID,
+			ProductID: mem.ProductID,
+			Quantity:  alloc,
+			Status:    models.RightStatusActive,
+			CreatedAt: now,
+			ExpiresAt: now.Add(s.paymentTTL),
+		}
+
+		if errSave := s.durable.SaveRight(ctx, right); errSave != nil {
+			s.rollbackAdvance(ctx, productID, uid, alloc, score)
+			log.ErrorContext(ctx, "failed to save right in advance queue", slog.Any("error", errSave))
+			return
+		}
+
+		mem.Status = models.MembershipStatusRightActive
+		mem.CurrentToken = &right.Token
+		mem.ExpiresAt = &right.ExpiresAt
+
+		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
+			log.ErrorContext(ctx, "failed to upsert membership", slog.Any("error", errUpsert))
+		}
+		s.syncCacheState(ctx, mem, right)
+
+	case models.MembershipStatusOfferPending:
+		mem.Status = models.MembershipStatusOfferPending
+		mem.AvailableQuantity = &avail
+
+		exp := new(time.Time)
+		*exp = now.Add(s.offerTTL)
+		mem.ExpiresAt = exp
+
+		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
+			s.rollbackAdvance(ctx, productID, uid, avail, score)
+			log.ErrorContext(ctx, "failed to upsert partial membership", slog.Any("error", errUpsert))
+			return
+		}
+		s.syncCacheState(ctx, mem, nil)
+
+	case models.MembershipStatusSoldOut:
+		mem.Status = models.MembershipStatusSoldOut
+		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
+			s.rollbackAdvance(ctx, productID, uid, 0, score)
+			log.ErrorContext(ctx, "failed to upsert sold_out membership", slog.Any("error", errUpsert))
+			return
+		}
+		s.syncCacheState(ctx, mem, nil)
+	}
 }
 
 // rollbackAdvance handles disaster recovery if the durable database fails during queue advancement.
@@ -475,12 +503,12 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 	right.Status = models.RightStatusUsed
 	right.OrderID = &orderID
 
-	if err := s.cache.CommitPurchase(context.Background(), right.ProductID, right.Quantity); err != nil {
-		log.ErrorContext(ctx, "failed to commit physical purchase in cache", slog.Any("error", err))
+	if errCommit := s.cache.CommitPurchase(context.Background(), right.ProductID, right.Quantity); errCommit != nil {
+		log.ErrorContext(ctx, "failed to commit physical purchase in cache", slog.Any("error", errCommit))
 	}
 
-	mem, err := s.cache.GetMembership(ctx, right.ProductID, right.UserID)
-	if err == nil {
+	mem, errMem := s.cache.GetMembership(ctx, right.ProductID, right.UserID)
+	if errMem == nil {
 		mem.Status = models.MembershipStatusPurchased
 		mem.UpdatedAt = time.Now().UTC()
 
@@ -494,7 +522,7 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 			log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", errRemove))
 		}
 	} else {
-		log.ErrorContext(ctx, "failed to fetch membership for purchased right", slog.Any("error", err))
+		log.ErrorContext(ctx, "failed to fetch membership for purchased right", slog.Any("error", errMem))
 		if errCacheRight := s.cache.SetRight(ctx, right); errCacheRight != nil {
 			log.ErrorContext(ctx, "failed to sync right cache independently", slog.Any("error", errCacheRight))
 		}
