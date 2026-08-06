@@ -15,13 +15,23 @@ func (h *QueueHandler) join(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m, err := h.service.Join(r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()), req.Quantity)
+	membership, right, err := h.service.JoinQueue(
+		r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()), req.Quantity,
+	)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
 
-	writeJSON(w, r, http.StatusCreated, newMembershipResponse(m))
+	resp := newMembershipResponse(membership)
+
+	// A right issued straight away may not be reflected in the membership the
+	// service returned, so the token comes from the right itself.
+	if right != nil && resp.Token == "" {
+		resp.Token = right.Token
+	}
+
+	writeJSON(w, r, http.StatusCreated, resp)
 }
 
 // status handles GET /queue/{product_id}/members/me. One resource serves both the
@@ -32,13 +42,15 @@ func (h *QueueHandler) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m, err := h.service.Status(r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()))
+	membership, err := h.service.GetMembership(
+		r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()),
+	)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, newMembershipResponse(m))
+	writeJSON(w, r, http.StatusOK, newMembershipResponse(membership))
 }
 
 // acceptOffer handles PATCH /queue/{product_id}/members/me.
@@ -48,18 +60,20 @@ func (h *QueueHandler) acceptOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m, err := h.service.AcceptOffer(r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()), req.Quantity)
+	right, err := h.service.AcceptOffer(
+		r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()), req.Quantity,
+	)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, newMembershipResponse(m))
+	writeJSON(w, r, http.StatusOK, newRightResponse(right))
 }
 
 // leave handles DELETE /queue/{product_id}/members/me.
 func (h *QueueHandler) leave(w http.ResponseWriter, r *http.Request) {
-	err := h.service.Leave(r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()))
+	err := h.service.DeclineOffer(r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()))
 	if err != nil {
 		writeError(w, r, err)
 		return

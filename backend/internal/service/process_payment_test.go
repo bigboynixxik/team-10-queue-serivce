@@ -25,6 +25,7 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Success_CacheHit() {
 	s.mockCache.EXPECT().GetRight(s.ctx, "token-1").Return(right, nil)
 	s.mockDurable.EXPECT().UpdateStockAndRightTx(s.ctx, "token-1", "order-1", 1).Return(nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
+	s.mockAvito.EXPECT().DecrementStock(gomock.Any(), "prod-1", 1).Return(nil)
 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
 	s.mockDurable.EXPECT().UpsertMembership(s.ctx, gomock.Cond(func(x any) bool {
@@ -55,6 +56,7 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Success_CacheMiss_DBHit() {
 
 	s.mockDurable.EXPECT().UpdateStockAndRightTx(s.ctx, "token-db", "order-2", 1).Return(nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
+	s.mockAvito.EXPECT().DecrementStock(gomock.Any(), "prod-1", 1).Return(nil)
 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
 	s.mockDurable.EXPECT().UpsertMembership(s.ctx, gomock.Any()).Return(nil)
@@ -114,6 +116,7 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_MembershipFetchFails
 	s.mockCache.EXPECT().GetRight(s.ctx, "token-6").Return(right, nil)
 	s.mockDurable.EXPECT().UpdateStockAndRightTx(s.ctx, "token-6", "order-6", 1).Return(nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
+	s.mockAvito.EXPECT().DecrementStock(gomock.Any(), "prod-1", 1).Return(nil)
 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(nil, errors.New("cache offline"))
 	s.mockCache.EXPECT().SetRight(s.ctx, gomock.Any()).Return(nil)
@@ -134,6 +137,7 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_AdvanceQueueFails() 
 	s.mockCache.EXPECT().GetRight(s.ctx, "token-7").Return(right, nil)
 	s.mockDurable.EXPECT().UpdateStockAndRightTx(s.ctx, "token-7", "order-7", 1).Return(nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
+	s.mockAvito.EXPECT().DecrementStock(gomock.Any(), "prod-1", 1).Return(nil)
 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
 	s.mockDurable.EXPECT().UpsertMembership(s.ctx, gomock.Any()).Return(nil)
