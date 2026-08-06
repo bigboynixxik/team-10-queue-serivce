@@ -417,3 +417,92 @@ func (s *QueueService) rollbackAdvance(ctx context.Context, productID, userID st
 		log.ErrorContext(ctx, "CRITICAL: failed to requeue user on advance rollback", slog.Any("error", err))
 	}
 }
+
+// ValidateRight validates a purchase right before allowing the user to proceed to checkout.
+// It strictly checks ownership, expiration, and status to prevent fraud, and uses a database
+// fallback in case of a cache miss.
+func (s *QueueService) ValidateRight(ctx context.Context, token string, userID string) (*models.Right, error) {
+	right, err := s.cache.GetRight(ctx, token)
+	if errors.Is(err, models.ErrTokenNotFound) {
+		right, err = s.durable.GetRightByToken(ctx, token)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("service.ValidateRight fetch: %w", err)
+	}
+
+	if right.UserID != userID {
+		return nil, models.ErrForbidden
+	}
+
+	if right.Status == models.RightStatusUsed {
+		return nil, models.ErrTokenUsed
+	}
+
+	if right.Status != models.RightStatusActive {
+		return nil, models.ErrInvalidStatus
+	}
+
+	if time.Now().UTC().After(right.ExpiresAt) {
+		return nil, models.ErrTokenExpired
+	}
+
+	return right, nil
+}
+
+// ProcessPayment handles the asynchronous webhook from the payment gateway.
+// It is idempotent, manages database transactions, handles overselling protection,
+// and triggers queue advancement upon successful physical stock reduction.
+func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID string) error {
+	log := logger.FromContext(ctx)
+
+	right, err := s.cache.GetRight(ctx, token)
+	if errors.Is(err, models.ErrTokenNotFound) {
+		right, err = s.durable.GetRightByToken(ctx, token)
+	}
+	if err != nil {
+		return fmt.Errorf("service.ProcessPayment fetch right: %w", err)
+	}
+
+	if right.Status == models.RightStatusUsed {
+		return nil
+	}
+
+	err = s.durable.UpdateStockAndRightTx(ctx, token, orderID, right.Quantity)
+	if err != nil {
+		return fmt.Errorf("service.ProcessPayment transaction: %w", err)
+	}
+
+	right.Status = models.RightStatusUsed
+	right.OrderID = &orderID
+
+	if err := s.cache.CommitPurchase(context.Background(), right.ProductID, right.Quantity); err != nil {
+		log.ErrorContext(ctx, "failed to commit physical purchase in cache", slog.Any("error", err))
+	}
+
+	mem, err := s.cache.GetMembership(ctx, right.ProductID, right.UserID)
+	if err == nil {
+		mem.Status = models.MembershipStatus("PURCHASED")
+		mem.UpdatedAt = time.Now().UTC()
+
+		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
+			log.ErrorContext(ctx, "failed to upsert final purchased membership", slog.Any("error", errUpsert))
+		}
+
+		s.syncCacheState(ctx, mem, right)
+
+		if errRemove := s.cache.RemoveFromExpiryTimer(ctx, right.ProductID, right.UserID); errRemove != nil {
+			log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", errRemove))
+		}
+	} else {
+		log.ErrorContext(ctx, "failed to fetch membership for purchased right", slog.Any("error", err))
+		if errCacheRight := s.cache.SetRight(ctx, right); errCacheRight != nil {
+			log.ErrorContext(ctx, "failed to sync right cache independently", slog.Any("error", errCacheRight))
+		}
+	}
+
+	if errAdvance := s.AdvanceQueue(context.Background(), right.ProductID); errAdvance != nil {
+		log.ErrorContext(ctx, "failed to advance queue after successful payment", slog.Any("error", errAdvance))
+	}
+
+	return nil
+}
