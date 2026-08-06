@@ -78,6 +78,13 @@ type CacheRepo interface {
 
 	// GetAndRemoveExpired atomically retrieves and removes items from the expiry timer that have timed out.
 	GetAndRemoveExpired(ctx context.Context, now time.Time) ([]string, error)
+
+	// PopAndAllocate atomically reads the first user in the queue, checks their status,
+	// removes them if applicable, and allocates available stock.
+	PopAndAllocate(ctx context.Context, productID string) (userID string, allocated int, available int, soldOut bool, status models.MembershipStatus, score float64, err error)
+
+	// Requeue atomically puts a user back into the queue at their original position (used for rollbacks).
+	Requeue(ctx context.Context, productID string, userID string, score float64) error
 }
 
 // AvitoClient defines the contract for interacting with the external AvitoBackend API.

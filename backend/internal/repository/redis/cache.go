@@ -63,6 +63,50 @@ var (
 		end
 		return expired
 	`)
+
+	popAndAllocateScript = redis.NewScript(`
+		local queueKey = KEYS[1]
+		local stockKey = KEYS[2]
+		local pid = ARGV[1]
+
+		local first = redis.call('ZRANGE', queueKey, 0, 0, 'WITHSCORES')
+		if #first == 0 then
+			return {"", 0, 0, 0, "", 0}
+		end
+
+		local uid = first[1]
+		local score = tonumber(first[2])
+		local memKey = "member:" .. pid .. ":" .. uid
+
+		local status = redis.call('HGET', memKey, 'status')
+		if not status or status ~= 'QUEUED' then
+			redis.call('ZREM', queueKey, uid)
+			return {uid, 0, 0, 0, status or "GHOST", score}
+		end
+
+		local reqQty = tonumber(redis.call('HGET', memKey, 'quantity') or '0')
+		local avail = tonumber(redis.call('HGET', stockKey, 'available_units') or '0')
+		local count = tonumber(redis.call('HGET', stockKey, 'product_count') or '0')
+
+		if count == 0 then
+			redis.call('ZREM', queueKey, uid)
+			return {uid, 0, 0, 1, "SOLD_OUT", score}
+		end
+
+		if avail >= reqQty then
+			redis.call('HINCRBY', stockKey, 'available_units', -reqQty)
+			redis.call('ZREM', queueKey, uid)
+			return {uid, reqQty, 0, 0, "RIGHT_ACTIVE", score}
+		end
+
+		if avail > 0 then
+			redis.call('HINCRBY', stockKey, 'available_units', -avail)
+			redis.call('ZREM', queueKey, uid)
+			return {uid, 0, avail, 0, "OFFER_PENDING", score}
+		end
+
+		return {uid, 0, 0, 0, "QUEUED", score}
+	`)
 )
 
 // CacheRepo implements the service.CacheRepo interface using Redis.
@@ -373,4 +417,44 @@ func (c *CacheRepo) GetAndRemoveExpired(ctx context.Context, now time.Time) ([]s
 	}
 
 	return res, nil
+}
+
+// PopAndAllocate atomically reads the first user, removes them if applicable, and allocates stock.
+func (c *CacheRepo) PopAndAllocate(ctx context.Context, productID string) (string, int, int, bool, models.MembershipStatus, float64, error) {
+	queueKey := fmt.Sprintf("queue:%s", productID)
+	stockKey := fmt.Sprintf("stock:%s", productID)
+
+	res, err := popAndAllocateScript.Run(ctx, c.client, []string{queueKey, stockKey}, productID).Result()
+	if err != nil {
+		return "", 0, 0, false, "", 0, fmt.Errorf("redis.CacheRepo.PopAndAllocate execute script: %w", err)
+	}
+
+	resSlice, ok := res.([]interface{})
+	if !ok || len(resSlice) != 6 {
+		return "", 0, 0, false, "", 0, fmt.Errorf("redis.CacheRepo.PopAndAllocate: %w", ErrInvalidResponse)
+	}
+
+	uid := resSlice[0].(string)
+	if uid == "" {
+		return "", 0, 0, false, "", 0, nil
+	}
+
+	allocated := int(resSlice[1].(int64))
+	available := int(resSlice[2].(int64))
+	soldOut := resSlice[3].(int64) == 1
+	status := models.MembershipStatus(resSlice[4].(string))
+	score := float64(resSlice[5].(int64))
+
+	return uid, allocated, available, soldOut, status, score, nil
+}
+
+// Requeue atomically puts a user back into the queue at their original position (used for rollbacks).
+func (c *CacheRepo) Requeue(ctx context.Context, productID string, userID string, score float64) error {
+	queueKey := fmt.Sprintf("queue:%s", productID)
+
+	err := c.client.ZAdd(ctx, queueKey, redis.Z{Score: score, Member: userID}).Err()
+	if err != nil {
+		return fmt.Errorf("redis.CacheRepo.Requeue: %w", err)
+	}
+	return nil
 }
