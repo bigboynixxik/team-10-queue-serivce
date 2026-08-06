@@ -15,4 +15,13 @@ var (
 	ErrStockDepleted    = errors.New("product is sold out")
 	ErrInvalidStatus    = errors.New("invalid status value")
 	ErrQuantityExceeded = errors.New("requested quantity exceeds available offer")
+
+	// Queue service errors.
+	ErrMembershipNotFound = errors.New("membership not found")
+	ErrNoPendingOffer     = errors.New("no pending offer")
+
+	// Backward-compatible aliases.
+	ErrInvalidQuantity = ErrQuantityInvalid
+	ErrSoldOut         = ErrStockDepleted
+	ErrRightNotFound   = ErrTokenNotFound
 )
