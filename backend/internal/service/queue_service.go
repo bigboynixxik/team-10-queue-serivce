@@ -48,12 +48,13 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 	if quantity <= 0 {
 		return nil, nil, models.ErrQuantityInvalid
 	}
-
 	existingMem, err := s.cache.GetMembership(ctx, productID, userID)
 	if err == nil && existingMem != nil {
-		if existingMem.Status == models.MembershipStatusQueued ||
-			existingMem.Status == models.MembershipStatusOfferPending ||
-			existingMem.Status == models.MembershipStatusRightActive {
+		if existingMem.Status == models.MembershipStatusRightActive && existingMem.CurrentToken != nil {
+			right, _ := s.cache.GetRight(ctx, *existingMem.CurrentToken)
+			return existingMem, right, nil
+		}
+		if existingMem.Status == models.MembershipStatusQueued || existingMem.Status == models.MembershipStatusOfferPending {
 			return existingMem, nil, nil
 		}
 	} else if err != nil && !errors.Is(err, models.ErrTokenNotFound) {
@@ -67,6 +68,15 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 
 	if errInit := s.cache.InitStock(ctx, productID, totalStock); errInit != nil {
 		log.WarnContext(ctx, "failed to initialize stock in cache", slog.Any("error", errInit))
+	}
+	stockModel := &models.ProductStock{
+		ProductID:    productID,
+		TotalStock:   totalStock,
+		ProductCount: totalStock,
+		UpdatedAt:    time.Now().UTC(),
+	}
+	if err := s.durable.SaveInitialStock(ctx, stockModel); err != nil {
+		log.ErrorContext(ctx, "CRITICAL: failed to save initial stock to db", slog.Any("error", err))
 	}
 
 	alloc, avail, soldOut, errAlloc := s.cache.TryAllocate(ctx, productID, quantity)
