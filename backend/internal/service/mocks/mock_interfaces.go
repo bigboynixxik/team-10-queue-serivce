@@ -253,6 +253,26 @@ func (mr *MockCacheRepoMockRecorder) InitStock(ctx, productID, totalStock any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitStock", reflect.TypeOf((*MockCacheRepo)(nil).InitStock), ctx, productID, totalStock)
 }
 
+// PopAndAllocate mocks base method.
+func (m *MockCacheRepo) PopAndAllocate(ctx context.Context, productID string) (string, int, int, bool, models.MembershipStatus, float64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PopAndAllocate", ctx, productID)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(int)
+	ret3, _ := ret[3].(bool)
+	ret4, _ := ret[4].(models.MembershipStatus)
+	ret5, _ := ret[5].(float64)
+	ret6, _ := ret[6].(error)
+	return ret0, ret1, ret2, ret3, ret4, ret5, ret6
+}
+
+// PopAndAllocate indicates an expected call of PopAndAllocate.
+func (mr *MockCacheRepoMockRecorder) PopAndAllocate(ctx, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PopAndAllocate", reflect.TypeOf((*MockCacheRepo)(nil).PopAndAllocate), ctx, productID)
+}
+
 // PublishEvent mocks base method.
 func (m *MockCacheRepo) PublishEvent(ctx context.Context, productID, userID string, payload any) error {
 	m.ctrl.T.Helper()
@@ -293,6 +313,20 @@ func (m *MockCacheRepo) RemoveFromQueue(ctx context.Context, productID, userID s
 func (mr *MockCacheRepoMockRecorder) RemoveFromQueue(ctx, productID, userID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveFromQueue", reflect.TypeOf((*MockCacheRepo)(nil).RemoveFromQueue), ctx, productID, userID)
+}
+
+// Requeue mocks base method.
+func (m *MockCacheRepo) Requeue(ctx context.Context, productID, userID string, score float64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Requeue", ctx, productID, userID, score)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Requeue indicates an expected call of Requeue.
+func (mr *MockCacheRepoMockRecorder) Requeue(ctx, productID, userID, score any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Requeue", reflect.TypeOf((*MockCacheRepo)(nil).Requeue), ctx, productID, userID, score)
 }
 
 // RestoreAvailableUnits mocks base method.
