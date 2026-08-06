@@ -307,6 +307,103 @@ func (s *QueueService) syncCacheState(ctx context.Context, mem *models.QueueMemb
 }
 
 // AdvanceQueue acts as an internal engine to push the queue forward when stock frees up.
+// It intentionally ignores the boolean soldOut flag returned by PopAndAllocate,
+// relying exclusively on the strict models.MembershipStatus for state transitions.
 func (s *QueueService) AdvanceQueue(ctx context.Context, productID string) error {
+	log := logger.FromContext(ctx)
+
+	for {
+		uid, alloc, avail, _, status, score, err := s.cache.PopAndAllocate(ctx, productID)
+		if err != nil {
+			return fmt.Errorf("service.AdvanceQueue pop and allocate: %w", err)
+		}
+
+		if uid == "" || status == models.MembershipStatusQueued {
+			break
+		}
+
+		if status != models.MembershipStatusRightActive &&
+			status != models.MembershipStatusOfferPending &&
+			status != models.MembershipStatusSoldOut {
+			continue
+		}
+
+		mem, err := s.cache.GetMembership(ctx, productID, uid)
+		if err != nil {
+			s.rollbackAdvance(ctx, productID, uid, alloc+avail, score)
+			log.ErrorContext(ctx, "failed to get membership for advanced user", slog.Any("error", err), slog.String("user_id", uid))
+			continue
+		}
+
+		now := time.Now().UTC()
+		mem.UpdatedAt = now
+
+		if status == models.MembershipStatusRightActive {
+			right := &models.Right{
+				Token:     uuid.NewString(),
+				UserID:    mem.UserID,
+				ProductID: mem.ProductID,
+				Quantity:  alloc,
+				Status:    models.RightStatusActive,
+				CreatedAt: now,
+				ExpiresAt: now.Add(s.paymentTTL),
+			}
+
+			if err := s.durable.SaveRight(ctx, right); err != nil {
+				s.rollbackAdvance(ctx, productID, uid, alloc, score)
+				log.ErrorContext(ctx, "failed to save right in advance queue", slog.Any("error", err))
+				continue
+			}
+
+			mem.Status = models.MembershipStatusRightActive
+			mem.CurrentToken = &right.Token
+			mem.ExpiresAt = &right.ExpiresAt
+
+			if err := s.durable.UpsertMembership(ctx, mem); err != nil {
+				log.ErrorContext(ctx, "failed to upsert membership", slog.Any("error", err))
+			}
+			s.syncCacheState(ctx, mem, right)
+
+		} else if status == models.MembershipStatusOfferPending {
+			mem.Status = models.MembershipStatusOfferPending
+			mem.AvailableQuantity = &avail
+
+			exp := new(time.Time)
+			*exp = now.Add(s.offerTTL)
+			mem.ExpiresAt = exp
+
+			if err := s.durable.UpsertMembership(ctx, mem); err != nil {
+				s.rollbackAdvance(ctx, productID, uid, avail, score)
+				log.ErrorContext(ctx, "failed to upsert partial membership", slog.Any("error", err))
+				continue
+			}
+			s.syncCacheState(ctx, mem, nil)
+
+		} else {
+			mem.Status = models.MembershipStatusSoldOut
+			if err := s.durable.UpsertMembership(ctx, mem); err != nil {
+				s.rollbackAdvance(ctx, productID, uid, 0, score)
+				log.ErrorContext(ctx, "failed to upsert sold_out membership", slog.Any("error", err))
+				continue
+			}
+			s.syncCacheState(ctx, mem, nil)
+		}
+	}
+
 	return nil
+}
+
+// rollbackAdvance handles disaster recovery if the durable database fails during queue advancement.
+func (s *QueueService) rollbackAdvance(ctx context.Context, productID, userID string, qty int, score float64) {
+	log := logger.FromContext(ctx)
+
+	if qty > 0 {
+		if err := s.cache.RestoreAvailableUnits(context.Background(), productID, qty); err != nil {
+			log.ErrorContext(ctx, "CRITICAL: failed to restore units on advance rollback", slog.Any("error", err))
+		}
+	}
+
+	if err := s.cache.Requeue(context.Background(), productID, userID, score); err != nil {
+		log.ErrorContext(ctx, "CRITICAL: failed to requeue user on advance rollback", slog.Any("error", err))
+	}
 }
