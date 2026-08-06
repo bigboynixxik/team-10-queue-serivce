@@ -21,6 +21,13 @@ func NewQueueHandler(service transport.QueueService) *QueueHandler {
 	return &QueueHandler{service: service}
 }
 
+// APIPrefix versions the public API. Everything a client calls lives behind it,
+// so a breaking change can ship as /api/v2 while v1 keeps serving old clients.
+//
+// /healthz stays outside: it is infrastructure, not API, and the container
+// healthcheck must not break when the API version changes.
+const APIPrefix = "/api/v1"
+
 // NewRouter wires the routes and the middleware chain.
 //
 // Three groups with different callers, hence three different guards: /queue and
@@ -33,15 +40,17 @@ func NewRouter(h *QueueHandler, log *slog.Logger, internalToken string) http.Han
 	mux.HandleFunc("GET /healthz", health)
 
 	user := http.NewServeMux()
-	user.HandleFunc("POST /queue/{product_id}/members", h.join)
-	user.HandleFunc("GET /queue/{product_id}/members/me", h.status)
-	user.HandleFunc("PATCH /queue/{product_id}/members/me", h.acceptOffer)
-	user.HandleFunc("DELETE /queue/{product_id}/members/me", h.leave)
+	user.HandleFunc("POST "+APIPrefix+"/queue/{product_id}/members", h.join)
+	user.HandleFunc("GET "+APIPrefix+"/queue/{product_id}/members/me", h.status)
+	user.HandleFunc("PATCH "+APIPrefix+"/queue/{product_id}/members/me", h.acceptOffer)
+	user.HandleFunc("DELETE "+APIPrefix+"/queue/{product_id}/members/me", h.leave)
 
-	mux.Handle("/queue/", mw.UserMiddleware(user))
+	mux.Handle(APIPrefix+"/queue/", mw.UserMiddleware(user))
 
-	mux.Handle("GET /rights/{token}", mw.UserMiddleware(http.HandlerFunc(h.validateRight)))
-	mux.Handle("POST /rights/{token}/events", mw.InternalAuth(internalToken, http.HandlerFunc(h.rightEvents)))
+	mux.Handle("GET "+APIPrefix+"/rights/{token}",
+		mw.UserMiddleware(http.HandlerFunc(h.validateRight)))
+	mux.Handle("POST "+APIPrefix+"/rights/{token}/events",
+		mw.InternalAuth(internalToken, http.HandlerFunc(h.rightEvents)))
 
 	return mw.LoggingMiddleware(log, mux.ServeHTTP)
 }

@@ -84,7 +84,7 @@ services:
       dockerfile: docker/Dockerfile.prod
       args:
         # Baked into the bundle: the browser talks to nginx, never to :8080.
-        PUBLIC_API_BASE_URL: /api
+        PUBLIC_API_BASE_URL: /api/v1
     image: queue-frontend:local
     container_name: queue-frontend
     restart: unless-stopped

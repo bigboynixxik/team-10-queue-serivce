@@ -247,7 +247,7 @@ func (s *server) reportPayment(ctx context.Context, token, orderID string) error
 		return fmt.Errorf("encode event: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/rights/%s/events", s.queueBaseURL, token)
+	url := fmt.Sprintf("%s/api/v1/rights/%s/events", s.queueBaseURL, token)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
