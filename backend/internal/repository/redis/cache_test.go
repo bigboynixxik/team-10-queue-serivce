@@ -379,3 +379,138 @@ func (s *CacheTestSuite) TestGetAndRemoveExpired() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "prod-exp:user-future", remaining[0])
 }
+
+// TestPopAndAllocate_EmptyQueue verifies that an empty queue returns an empty user ID without errors.
+func (s *CacheTestSuite) TestPopAndAllocate_EmptyQueue() {
+	uid, _, _, _, _, _, err := s.repo.PopAndAllocate(s.ctx, "prod-empty")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), uid)
+}
+
+// TestPopAndAllocate_GhostUser verifies that a user in the ZSET queue without a corresponding
+// active membership in the HASH is identified as a "GHOST" and atomically removed from the queue.
+func (s *CacheTestSuite) TestPopAndAllocate_GhostUser() {
+	err := s.repo.Enqueue(s.ctx, "prod-ghost", "user-ghost")
+	require.NoError(s.T(), err)
+
+	uid, alloc, avail, soldOut, status, score, err := s.repo.PopAndAllocate(s.ctx, "prod-ghost")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "user-ghost", uid)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 0, avail)
+	require.False(s.T(), soldOut)
+	require.Equal(s.T(), models.MembershipStatus("GHOST"), status)
+	require.Greater(s.T(), score, float64(0))
+
+	count, err := s.client.ZCard(s.ctx, "queue:prod-ghost").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(0), count)
+}
+
+// TestPopAndAllocate_FullAllocation verifies that if there is enough stock, the user receives
+// RIGHT_ACTIVE status, the stock is decremented, and the user is removed from the queue.
+func (s *CacheTestSuite) TestPopAndAllocate_FullAllocation() {
+	err := s.repo.InitStock(s.ctx, "prod-full", 10)
+	require.NoError(s.T(), err)
+	err = s.repo.Enqueue(s.ctx, "prod-full", "user-full")
+	require.NoError(s.T(), err)
+
+	mem := &models.QueueMembership{ProductID: "prod-full", UserID: "user-full", Status: models.MembershipStatusQueued, Quantity: 2}
+	err = s.repo.SetMembership(s.ctx, mem)
+	require.NoError(s.T(), err)
+
+	uid, alloc, avail, soldOut, status, score, err := s.repo.PopAndAllocate(s.ctx, "prod-full")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "user-full", uid)
+	require.Equal(s.T(), 2, alloc)
+	require.Equal(s.T(), 0, avail)
+	require.False(s.T(), soldOut)
+	require.Equal(s.T(), models.MembershipStatusRightActive, status)
+	require.Greater(s.T(), score, float64(0))
+
+	count, err := s.client.ZCard(s.ctx, "queue:prod-full").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(0), count)
+}
+
+// TestPopAndAllocate_PartialAllocation verifies that if the requested quantity exceeds the available stock,
+// the user receives OFFER_PENDING status, the available stock is exhausted, and the user is removed from the queue.
+func (s *CacheTestSuite) TestPopAndAllocate_PartialAllocation() {
+	err := s.repo.InitStock(s.ctx, "prod-part", 2)
+	require.NoError(s.T(), err)
+	err = s.repo.Enqueue(s.ctx, "prod-part", "user-part")
+	require.NoError(s.T(), err)
+
+	mem := &models.QueueMembership{ProductID: "prod-part", UserID: "user-part", Status: models.MembershipStatusQueued, Quantity: 5}
+	err = s.repo.SetMembership(s.ctx, mem)
+	require.NoError(s.T(), err)
+
+	uid, alloc, avail, soldOut, status, _, err := s.repo.PopAndAllocate(s.ctx, "prod-part")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "user-part", uid)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 2, avail)
+	require.False(s.T(), soldOut)
+	require.Equal(s.T(), models.MembershipStatusOfferPending, status)
+}
+
+// TestPopAndAllocate_SoldOut verifies that if the total product count is zero, the user receives
+// SOLD_OUT status and is removed from the queue.
+func (s *CacheTestSuite) TestPopAndAllocate_SoldOut() {
+	err := s.repo.InitStock(s.ctx, "prod-sold", 0)
+	require.NoError(s.T(), err)
+	err = s.repo.Enqueue(s.ctx, "prod-sold", "user-sold")
+	require.NoError(s.T(), err)
+
+	mem := &models.QueueMembership{ProductID: "prod-sold", UserID: "user-sold", Status: models.MembershipStatusQueued, Quantity: 1}
+	err = s.repo.SetMembership(s.ctx, mem)
+	require.NoError(s.T(), err)
+
+	uid, alloc, avail, soldOut, status, _, err := s.repo.PopAndAllocate(s.ctx, "prod-sold")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "user-sold", uid)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 0, avail)
+	require.True(s.T(), soldOut)
+	require.Equal(s.T(), models.MembershipStatusSoldOut, status)
+}
+
+// TestPopAndAllocate_Queued_NoStock verifies that if available stock is zero but total product count is not,
+// meaning stock is temporarily held by others, the user remains in the queue with QUEUED status and is not removed.
+func (s *CacheTestSuite) TestPopAndAllocate_Queued_NoStock() {
+	err := s.repo.InitStock(s.ctx, "prod-q", 1)
+	require.NoError(s.T(), err)
+	_, _, _, err = s.repo.TryAllocate(s.ctx, "prod-q", 1)
+	require.NoError(s.T(), err)
+
+	err = s.repo.Enqueue(s.ctx, "prod-q", "user-q")
+	require.NoError(s.T(), err)
+
+	mem := &models.QueueMembership{ProductID: "prod-q", UserID: "user-q", Status: models.MembershipStatusQueued, Quantity: 1}
+	err = s.repo.SetMembership(s.ctx, mem)
+	require.NoError(s.T(), err)
+
+	uid, alloc, avail, soldOut, status, _, err := s.repo.PopAndAllocate(s.ctx, "prod-q")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "user-q", uid)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 0, avail)
+	require.False(s.T(), soldOut)
+	require.Equal(s.T(), models.MembershipStatusQueued, status)
+
+	count, err := s.client.ZCard(s.ctx, "queue:prod-q").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(1), count)
+}
+
+// TestRequeue verifies that a user is successfully inserted back into the ZSET queue with the exact specified score.
+func (s *CacheTestSuite) TestRequeue() {
+	err := s.repo.Requeue(s.ctx, "prod-req", "user-req", 42.5)
+	require.NoError(s.T(), err)
+
+	res, err := s.client.ZRangeWithScores(s.ctx, "queue:prod-req", 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Len(s.T(), res, 1)
+	require.Equal(s.T(), "user-req", res[0].Member)
+	require.Equal(s.T(), 42.5, res[0].Score)
+}
