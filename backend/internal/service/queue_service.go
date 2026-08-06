@@ -481,7 +481,7 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 
 	mem, err := s.cache.GetMembership(ctx, right.ProductID, right.UserID)
 	if err == nil {
-		mem.Status = models.MembershipStatus("PURCHASED")
+		mem.Status = models.MembershipStatusPurchased
 		mem.UpdatedAt = time.Now().UTC()
 
 		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
