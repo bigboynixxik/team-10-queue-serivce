@@ -22,7 +22,7 @@ type QueueService interface {
 	DeclineOffer(ctx context.Context, productID, userID string) error
 
 	// ValidateRight checks if a given token is valid, active, and belongs to the requesting user.
-	ValidateRight(ctx context.Context, token, userID string) error
+	ValidateRight(ctx context.Context, token, userID string) (*models.Right, error)
 
 	// ProcessPayment confirms a successful purchase, durably updating stock and invalidating the token.
 	ProcessPayment(ctx context.Context, token, orderID string) error
@@ -30,8 +30,4 @@ type QueueService interface {
 	// AdvanceQueue acts as an internal engine to push the queue forward when stock frees up.
 	// It is typically called internally after declines, expirations, or partial accepts.
 	AdvanceQueue(ctx context.Context, productID string) error
-
-	// ProcessExpirations scans for and handles users who did not react to their offers
-	// or complete their purchases within the allowed timeframes.
-	ProcessExpirations(ctx context.Context) error
 }
