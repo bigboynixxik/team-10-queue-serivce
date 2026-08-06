@@ -507,6 +507,14 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 		log.ErrorContext(ctx, "failed to commit physical purchase in cache", slog.Any("error", errCommit))
 	}
 
+	// AvitoBackend owns the physical stock, so the sale is not real until it knows
+	// (docs/design_context.md, п. 7). A failure here must not fail the payment:
+	// the money is already taken and our own state is committed, so the only sane
+	// reaction is to log and let reconciliation deal with it.
+	if errStock := s.avito.DecrementStock(ctx, right.ProductID, right.Quantity); errStock != nil {
+		log.ErrorContext(ctx, "failed to report stock decrement to avito", slog.Any("error", errStock))
+	}
+
 	mem, errMem := s.cache.GetMembership(ctx, right.ProductID, right.UserID)
 	if errMem == nil {
 		mem.Status = models.MembershipStatusPurchased

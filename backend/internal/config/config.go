@@ -44,6 +44,17 @@ type Config struct {
 
 	// ShutdownTimeout bounds the graceful shutdown period.
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s"`
+
+	// AvitoBaseURL points at AvitoBackend, the owner of the physical stock.
+	AvitoBaseURL string `env:"AVITO_BASE_URL" envDefault:"http://avitomock:9090"`
+
+	// InternalToken is the shared secret for service-to-service calls in both
+	// directions. Empty disables the check, which is only sane locally.
+	InternalToken string `env:"INTERNAL_TOKEN"`
+
+	// ExpirationInterval is how often the background worker looks for expired
+	// rights and offers.
+	ExpirationInterval time.Duration `env:"EXPIRATION_INTERVAL" envDefault:"1s"`
 }
 
 // Load reads the configuration from the .env file and environment variables.

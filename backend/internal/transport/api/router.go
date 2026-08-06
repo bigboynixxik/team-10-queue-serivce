@@ -4,55 +4,53 @@
 package api
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
-	"backend/internal/models"
+	"backend/internal/transport"
 	"backend/internal/transport/mw"
 )
 
-// QueueService is what the controller layer needs from the business layer. It is
-// declared here, on the consumer side, so the mock in internal/service/queue can be
-// replaced by the real implementation without touching the handlers.
-type QueueService interface {
-	Join(ctx context.Context, productID, userID string, quantity int) (models.Membership, error)
-	Status(ctx context.Context, productID, userID string) (models.Membership, error)
-	AcceptOffer(ctx context.Context, productID, userID string, quantity int) (models.Membership, error)
-	Leave(ctx context.Context, productID, userID string) error
-	ReportPayment(ctx context.Context, token string) error
-}
-
-// QueueHandler serves the queue
-// and rights endpoints.
+// QueueHandler serves the queue and rights endpoints.
 type QueueHandler struct {
-	service QueueService
+	service transport.QueueService
 }
 
 // NewQueueHandler creates the handler over the given service.
-func NewQueueHandler(service QueueService) *QueueHandler {
+func NewQueueHandler(service transport.QueueService) *QueueHandler {
 	return &QueueHandler{service: service}
 }
 
+// APIPrefix versions the public API. Everything a client calls lives behind it,
+// so a breaking change can ship as /api/v2 while v1 keeps serving old clients.
+//
+// /healthz stays outside: it is infrastructure, not API, and the container
+// healthcheck must not break when the API version changes.
+const APIPrefix = "/api/v1"
+
 // NewRouter wires the routes and the middleware chain.
 //
-// The /queue routes act on behalf of a user and therefore go through
-// UserMiddleware; /rights/{token}/events is service-to-service (called by the
-// Order Service, not by a browser) and /healthz is infrastructure — both skip it.
-func NewRouter(h *QueueHandler, log *slog.Logger) http.Handler {
+// Three groups with different callers, hence three different guards: /queue and
+// GET /rights/{token} act on behalf of a user and go through UserMiddleware;
+// POST /rights/{token}/events comes from AvitoBackend and is guarded by the
+// shared secret; /healthz is infrastructure and is open.
+func NewRouter(h *QueueHandler, log *slog.Logger, internalToken string) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", health)
 
 	user := http.NewServeMux()
-	user.HandleFunc("POST /queue/{product_id}/members", h.join)
-	user.HandleFunc("GET /queue/{product_id}/members/me", h.status)
-	user.HandleFunc("PATCH /queue/{product_id}/members/me", h.acceptOffer)
-	user.HandleFunc("DELETE /queue/{product_id}/members/me", h.leave)
+	user.HandleFunc("POST "+APIPrefix+"/queue/{product_id}/members", h.join)
+	user.HandleFunc("GET "+APIPrefix+"/queue/{product_id}/members/me", h.status)
+	user.HandleFunc("PATCH "+APIPrefix+"/queue/{product_id}/members/me", h.acceptOffer)
+	user.HandleFunc("DELETE "+APIPrefix+"/queue/{product_id}/members/me", h.leave)
 
-	mux.Handle("/queue/", mw.UserMiddleware(user))
+	mux.Handle(APIPrefix+"/queue/", mw.UserMiddleware(user))
 
-	mux.HandleFunc("POST /rights/{token}/events", h.rightEvents)
+	mux.Handle("GET "+APIPrefix+"/rights/{token}",
+		mw.UserMiddleware(http.HandlerFunc(h.validateRight)))
+	mux.Handle("POST "+APIPrefix+"/rights/{token}/events",
+		mw.InternalAuth(internalToken, http.HandlerFunc(h.rightEvents)))
 
 	return mw.LoggingMiddleware(log, mux.ServeHTTP)
 }

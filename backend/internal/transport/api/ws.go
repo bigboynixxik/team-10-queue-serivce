@@ -13,9 +13,9 @@ import (
 	"backend/pkg/logger"
 )
 
-// pollInterval exists because the stub has no change notifications: the loop polls
-// its own service and pushes on change. The real implementation replaces the loop
-// with a subscription, and the client sees no difference.
+// pollInterval is how often the loop re-reads the membership. The service also
+// publishes every change to a Redis channel; switching this loop to that
+// subscription is a drop-in change the client will not notice.
 const pollInterval = time.Second
 
 // stream serves the realtime mode of GET /queue/{product_id}/members/me.
@@ -46,9 +46,9 @@ func (h *QueueHandler) stream(w http.ResponseWriter, r *http.Request) {
 	var sent membershipResponse
 
 	for {
-		m, err := h.service.Status(ctx, productID, userID)
+		membership, err := h.service.GetMembership(ctx, productID, userID)
 		if err != nil {
-			if errors.Is(err, models.ErrMembershipNotFound) {
+			if errors.Is(err, models.ErrMembershipNotFound) || errors.Is(err, models.ErrTokenNotFound) {
 				_ = conn.Close(websocket.StatusPolicyViolation, "membership not found")
 			} else {
 				log.Error("websocket status", "error", err)
@@ -57,7 +57,7 @@ func (h *QueueHandler) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		resp := newMembershipResponse(m)
+		resp := newMembershipResponse(membership)
 		if !sameMembership(sent, resp) {
 			if err := wsjson.Write(ctx, conn, resp); err != nil {
 				log.Debug("websocket write", "error", err)
@@ -66,7 +66,7 @@ func (h *QueueHandler) stream(w http.ResponseWriter, r *http.Request) {
 			sent = resp
 		}
 
-		if isTerminal(m.Status) {
+		if isTerminal(membership.Status) {
 			_ = conn.Close(websocket.StatusNormalClosure, "terminal status")
 			return
 		}
@@ -97,8 +97,8 @@ func sameMembership(a, b membershipResponse) bool {
 	}
 }
 
-func isTerminal(status models.Status) bool {
-	return status == models.StatusPurchased ||
-		status == models.StatusDeclined ||
-		status == models.StatusSoldOut
+func isTerminal(status models.MembershipStatus) bool {
+	return status == models.MembershipStatusPurchased ||
+		status == models.MembershipStatusDeclined ||
+		status == models.MembershipStatusSoldOut
 }

@@ -13,6 +13,10 @@ type QueueService interface {
 	// or immediately issuing an offer/right depending on stock availability.
 	JoinQueue(ctx context.Context, productID, userID string, quantity int) (*models.QueueMembership, *models.Right, error)
 
+	// GetMembership returns the user's current state in the queue. It serves both
+	// the polling read and every push of the realtime channel.
+	GetMembership(ctx context.Context, productID, userID string) (*models.QueueMembership, error)
+
 	// AcceptOffer confirms a partial offer. The user can accept less than initially offered.
 	// Any unused quantity is automatically returned to the pool for the next in line.
 	AcceptOffer(ctx context.Context, productID, userID string, acceptedQuantity int) (*models.Right, error)
