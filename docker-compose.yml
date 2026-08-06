@@ -29,6 +29,8 @@ services:
     build:
       context: backend
       dockerfile: Dockerfile
+      args:
+        CMD: api
     image: queue-service:local
     container_name: queue-service
     restart: unless-stopped
@@ -42,12 +44,39 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      avitomock:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
       start_period: 5s
+
+  # Stands in for the external Avito system: owns the physical stock and hosts
+  # the checkout page. Out of scope of the case, but the journey needs somewhere
+  # to pay (docs/design_context.md, п. 7).
+  avitomock:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+      args:
+        CMD: avitomock
+    image: avito-mock:local
+    container_name: avito-mock
+    restart: unless-stopped
+    env_file: backend/.env
+    environment:
+      PORT: "9090"
+      QUEUE_BASE_URL: http://backend:8080
+    ports:
+      - "${AVITO_MOCK_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 3s
 
   frontend:
     build:
