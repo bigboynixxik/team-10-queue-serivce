@@ -1,5 +1,5 @@
-// Package postgres provides connection pooling and transaction management for PostgreSQL.
-package postgres
+// Package postgres_settings provides connection pooling and transaction management for PostgreSQL.
+package postgres_settings
 
 import (
 	"context"
