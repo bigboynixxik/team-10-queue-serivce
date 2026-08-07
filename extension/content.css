@@ -1,0 +1,21 @@
+#avito-queue-service-button {
+  width: 100%;
+  min-height: 48px;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 16px;
+  background: #02d15c;
+  color: #fff;
+  cursor: pointer;
+  font: 600 16px/24px Arial, sans-serif;
+}
+
+#avito-queue-service-button:hover {
+  background: #009c54;
+}
+
+#avito-queue-service-button:focus-visible {
+  outline: 3px solid #94dabb;
+  outline-offset: 2px;
+}
