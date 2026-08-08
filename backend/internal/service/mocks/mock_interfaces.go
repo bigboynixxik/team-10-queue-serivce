@@ -224,6 +224,22 @@ func (mr *MockCacheRepoMockRecorder) GetMembership(ctx, productID, userID any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMembership", reflect.TypeOf((*MockCacheRepo)(nil).GetMembership), ctx, productID, userID)
 }
 
+// GetQueueMetrics mocks base method.
+func (m *MockCacheRepo) GetQueueMetrics(ctx context.Context, productID, userID string) (int, int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetQueueMetrics", ctx, productID, userID)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetQueueMetrics indicates an expected call of GetQueueMetrics.
+func (mr *MockCacheRepoMockRecorder) GetQueueMetrics(ctx, productID, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQueueMetrics", reflect.TypeOf((*MockCacheRepo)(nil).GetQueueMetrics), ctx, productID, userID)
+}
+
 // GetRight mocks base method.
 func (m *MockCacheRepo) GetRight(ctx context.Context, token string) (*models.Right, error) {
 	m.ctrl.T.Helper()
