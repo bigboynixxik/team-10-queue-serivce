@@ -15,8 +15,6 @@ export const useJoinQueueForm = (product: Product) => {
   const { data: stats } = useQuery(queueQueries.stats(product.id));
   const [quantity, setQuantity] = useState(MIN_QUANTITY);
 
-  // Stock is unknown while the stats request is in flight — the backend stays the
-  // final authority, so an unavailable limit must not block the user.
   const maxQuantity = stats?.product_count;
 
   const notifyOverLimit = (max: number) =>

@@ -14,15 +14,6 @@ const describeQueue = (queue: UserQueue): string =>
     ? `${statusText.QUEUED}, позиция ${queue.position}`
     : statusText[queue.status];
 
-/**
- * Turns two consecutive SSE snapshots into one line of text. The stream sends
- * the whole list every time, so the previous snapshot is the only way to tell
- * what the user should actually be told about.
- *
- * Without a previous snapshot the list is the user's history rather than news,
- * so finished queues stay silent — announcing a long sold out product as if it
- * had just happened is what the user reads as a wrong message.
- */
 export const describeUserQueuesUpdate = (
   queues: UserQueue[],
   previous: UserQueue[] | undefined,

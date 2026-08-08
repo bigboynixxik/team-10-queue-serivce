@@ -6,20 +6,11 @@ import { useCallback, useRef } from 'react';
 
 import { describeUserQueuesUpdate } from './describeUserQueuesUpdate';
 
-// Live updates arrive as often as the queues move, so they stay on screen far
-// shorter than the status toasts a user has to act upon.
 const LIVE_UPDATE_TOAST_DURATION = 4000;
 
-/**
- * Mounted once for the whole app: keeps the single SSE stream open and reports
- * every event as a toast, whether or not the queues menu is on screen.
- */
 export const useMyQueuesLiveUpdates = (userId: string): void => {
   const { info } = useToast();
   const { data: products } = useQuery(productQueries.list());
-  // The notifier owns the comparison baseline: the query cache is also written
-  // by plain refetches and may be dropped once nothing observes it, which would
-  // make an ordinary update look like a first snapshot.
   const previousQueues = useRef<UserQueue[] | undefined>(undefined);
 
   const onUpdate = useCallback(

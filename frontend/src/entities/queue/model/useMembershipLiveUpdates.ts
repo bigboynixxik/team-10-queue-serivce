@@ -8,11 +8,6 @@ import { isTerminalStatus } from './status';
 
 const reconnectDelays = [1000, 2000, 5000, 10000];
 
-/**
- * Pushes websocket updates straight into the React Query cache so the query
- * stays the single source of truth for the membership. A dead socket falls
- * back to a refetch instead of leaving the UI on stale data.
- */
 export const useMembershipLiveUpdates = (productId: string, userId: string): void => {
   const queryClient = useQueryClient();
 

@@ -7,15 +7,6 @@ import { queueMembershipQueryKey, userQueuesQueryKey } from './queries';
 
 const reconnectDelays = [1000, 2000, 5000, 10000];
 
-/**
- * The snapshot is authoritative for every queue the user takes part in, so the
- * per-product membership caches are refreshed from it too. Screens outside the
- * queue page keep no socket of their own and would otherwise go on showing a
- * membership the user has already been dropped from, e.g. after a sold out.
- *
- * The position is deliberately left out: it moves with every step of the queue
- * and would re-render every card that only cares about the status.
- */
 const syncMemberships = (queryClient: QueryClient, queues: UserQueue[]): void => {
   for (const queue of queues) {
     queryClient.setQueryData<Membership>(queueMembershipQueryKey(queue.product_id), {
@@ -38,7 +29,6 @@ const getUserQueuesSseUrl = (userId: string): string => {
 };
 
 type Options = {
-  /** Called with the fresh snapshot after every `update` event. */
   onUpdate?: (queues: UserQueue[]) => void;
 };
 
@@ -46,7 +36,6 @@ export const useUserQueuesLiveUpdates = (userId: string, { onUpdate }: Options =
   const queryClient = useQueryClient();
   const onUpdateRef = useRef(onUpdate);
 
-  // Kept in a ref so a new callback identity never restarts the stream.
   onUpdateRef.current = onUpdate;
 
   useEffect(() => {

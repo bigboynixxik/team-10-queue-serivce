@@ -30,7 +30,6 @@ export const router = createBrowserRouter(
           element: <OrderInfoPage />,
         },
         {
-          // The queue lives on the product page now; old links must not dead-end.
           path: 'queue/:productId',
           loader: ({ params }) => redirect(`/order-info/${params.productId}`),
         },
