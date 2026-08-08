@@ -14,7 +14,4 @@ export const USER_ID_STORAGE_KEY = readEnv(
 
 export const APP_BASENAME = '/avito';
 
-export const APP_STALE_TIME = readEnvNumber(
-  import.meta.env.PUBLIC_APP_STALE_TIME,
-  30000,
-);
+export const APP_STALE_TIME = readEnvNumber(import.meta.env.PUBLIC_APP_STALE_TIME, 30000);

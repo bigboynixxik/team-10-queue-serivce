@@ -27,7 +27,7 @@ describe('queueMutations', () => {
     join.mockResolvedValue({ status: 'QUEUED' });
     const options = queueMutations.join('p1');
 
-    await expect(options.mutationFn!({ quantity: 2 }, {} as never)).resolves.toEqual({
+    await expect(options.mutationFn?.({ quantity: 2 }, {} as never)).resolves.toEqual({
       status: 'QUEUED',
     });
     expect(join).toHaveBeenCalledWith('p1', { quantity: 2 });
@@ -45,7 +45,7 @@ describe('queueMutations', () => {
     const accept = queueMutations.acceptOffer('p1');
     const decline = queueMutations.declineOffer('p1');
 
-    await accept.mutationFn!({ quantity: 1 }, {} as never);
+    await accept.mutationFn?.({ quantity: 1 }, {} as never);
     await decline.mutationFn?.(undefined as never, {} as never);
 
     await accept.onSuccess?.(

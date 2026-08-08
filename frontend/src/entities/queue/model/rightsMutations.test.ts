@@ -13,7 +13,7 @@ describe('rightsMutations', () => {
     validate.mockResolvedValue(undefined);
     const options = rightsMutations.validate();
 
-    await options.mutationFn!('token-1', {} as never);
+    await options.mutationFn?.('token-1', {} as never);
     expect(validate).toHaveBeenCalledWith('token-1');
   });
 });

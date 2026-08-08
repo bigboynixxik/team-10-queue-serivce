@@ -10,7 +10,10 @@
   font: inherit;
   font-weight: 700;
   cursor: pointer;
-  transition: background-color 150ms ease, border-color 150ms ease, opacity 150ms ease;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    opacity 150ms ease;
 }
 
 .Button--primary {

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, rs, test } from '@rstest/core';
-import { act } from '@testing-library/react';
-
 import { createTestQueryClient, renderHookWithProviders } from '@test/render';
+import { act } from '@testing-library/react';
 
 type Listener = (event: MessageEvent<string>) => void;
 

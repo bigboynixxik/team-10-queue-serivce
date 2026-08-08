@@ -1,4 +1,5 @@
 export { Alert } from './alert/Alert';
+export { default as avitoLogo } from './brand/Avito.svg';
 export { Button } from './button/Button';
 export { Card } from './card/Card';
 export { type DescriptionItem, DescriptionList } from './description-list/DescriptionList';

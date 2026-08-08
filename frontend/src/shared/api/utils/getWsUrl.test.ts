@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, rs, test } from '@rstest/core';
 
-rs.mock('@shared/config/env', () => ({
+rs.mock('@shared/config', () => ({
   API_BASE_URL: 'https://api.example.com/api/v1',
 }));
 

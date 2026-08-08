@@ -1,6 +1,5 @@
-import { QueryClientProvider, type QueryClientProviderProps } from '@tanstack/react-query';
-
 import { queryClient } from '@shared/lib';
+import { QueryClientProvider, type QueryClientProviderProps } from '@tanstack/react-query';
 
 type QueryProviderProps = Pick<QueryClientProviderProps, 'children'>;
 

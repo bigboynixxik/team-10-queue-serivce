@@ -1,4 +1,4 @@
-import { APP_STALE_TIME } from '@shared/config/env';
+import { APP_STALE_TIME } from '@shared/config';
 import { queryOptions } from '@tanstack/react-query';
 
 import { productApi } from '../api/ProductApi';

@@ -36,7 +36,7 @@ describe('queueQueries', () => {
 
     expect(options.queryKey).toEqual(['queue', 'membership', 'p1']);
     expect(options.retry).toBe(false);
-    await expect(options.queryFn!({} as never)).resolves.toEqual({ status: 'QUEUED' });
+    await expect(options.queryFn?.({} as never)).resolves.toEqual({ status: 'QUEUED' });
     expect(getMe).toHaveBeenCalledWith('p1');
   });
 
@@ -44,7 +44,7 @@ describe('queueQueries', () => {
     getStats.mockResolvedValue({ product_count: 1 });
     expect(queueQueries.stats('').enabled).toBe(false);
     expect(queueQueries.stats('p1').enabled).toBe(true);
-    await queueQueries.stats('p1').queryFn!({} as never);
+    await queueQueries.stats('p1').queryFn?.({} as never);
     expect(getStats).toHaveBeenCalledWith('p1');
   });
 
@@ -52,7 +52,7 @@ describe('queueQueries', () => {
     getAll.mockResolvedValue([]);
     expect(queueQueries.allForUser('').enabled).toBe(false);
     expect(queueQueries.allForUser('u1').enabled).toBe(true);
-    await queueQueries.allForUser('u1').queryFn!({} as never);
+    await queueQueries.allForUser('u1').queryFn?.({} as never);
     expect(getAll).toHaveBeenCalled();
   });
 });

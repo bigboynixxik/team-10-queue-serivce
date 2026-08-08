@@ -11,7 +11,12 @@ type Props = {
   onClose?: () => void;
 };
 
-export const Alert = ({ variant = 'info', title, description, onClose }: Props): React.JSX.Element => (
+export const Alert = ({
+  variant = 'info',
+  title,
+  description,
+  onClose,
+}: Props): React.JSX.Element => (
   <div
     className={[
       styles[bem()],
@@ -22,7 +27,12 @@ export const Alert = ({ variant = 'info', title, description, onClose }: Props):
     <strong className={styles[bem('title')]}>{title}</strong>
     {description && <p className={styles[bem('description')]}>{description}</p>}
     {onClose && (
-      <button aria-label="Закрыть уведомление" className={styles[bem('close')]} onClick={onClose} type="button">
+      <button
+        aria-label="Закрыть уведомление"
+        className={styles[bem('close')]}
+        onClick={onClose}
+        type="button"
+      >
         ×
       </button>
     )}

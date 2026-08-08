@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '@shared/config/env';
+import { API_BASE_URL } from '@shared/config';
 
 export const getWsUrl = (productId: string, userId: string) => {
   const apiUrl = new URL(API_BASE_URL || '/api/v1', window.location.origin);

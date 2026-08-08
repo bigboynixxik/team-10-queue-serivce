@@ -1,6 +1,14 @@
 import { cn } from '@shared/lib';
 import type { PropsWithChildren } from 'react';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 
 import { Alert } from '../alert/Alert';
@@ -59,11 +67,7 @@ export const ToastProvider = ({ children }: PropsWithChildren): React.JSX.Elemen
   }, []);
 
   const addToast = useCallback(
-    (
-      content: ToastContent,
-      variant: Toast['variant'],
-      duration: number,
-    ) => {
+    (content: ToastContent, variant: Toast['variant'], duration: number) => {
       const key = toastKey(content, variant);
 
       if (visibleKeys.current.has(key)) return;
@@ -73,14 +77,19 @@ export const ToastProvider = ({ children }: PropsWithChildren): React.JSX.Elemen
       const id = Date.now() + Math.random();
 
       setToasts((current) => [...current, { id, key, ...content, variant }]);
-      timeoutIds.current.set(id, window.setTimeout(() => dismiss(id), duration));
+      timeoutIds.current.set(
+        id,
+        window.setTimeout(() => dismiss(id), duration),
+      );
     },
     [dismiss],
   );
 
   useEffect(
     () => () => {
-      timeoutIds.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      for (const timeoutId of timeoutIds.current.values()) {
+        window.clearTimeout(timeoutId);
+      }
     },
     [],
   );

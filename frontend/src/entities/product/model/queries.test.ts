@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, rs, test } from '@rstest/core';
 const list = rs.fn();
 const byId = rs.fn();
 
-rs.mock('@shared/config/env', () => ({
+rs.mock('@shared/config', () => ({
   APP_STALE_TIME: 12345,
 }));
 
@@ -32,8 +32,8 @@ describe('productQueries', () => {
     expect(listOptions.staleTime).toBe(12345);
     expect(byIdOptions.staleTime).toBe(12345);
 
-    await listOptions.queryFn!({} as never);
-    await byIdOptions.queryFn!({} as never);
+    await listOptions.queryFn?.({} as never);
+    await byIdOptions.queryFn?.({} as never);
 
     expect(list).toHaveBeenCalled();
     expect(byId).toHaveBeenCalledWith('p1');
