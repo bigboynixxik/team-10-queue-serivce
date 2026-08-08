@@ -1,26 +1,20 @@
-import type { Product } from '@entities/product';
-import { Button, NumberInput, Stack } from '@ui';
-
-import { useJoinQueueForm } from '../model/useJoinQueueForm';
+import { Button } from '@ui';
+import type { MouseEvent } from 'react';
 
 type Props = {
-  product: Product;
+  onJoin: () => void;
+  isPending: boolean;
 };
 
-export const JoinQueueButton = ({ product }: Props): React.JSX.Element => {
-  const { quantity, setQuantity, submit, isPending } = useJoinQueueForm(product);
+export const JoinQueueButton = ({ onJoin, isPending }: Props): React.JSX.Element => {
+  const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    onJoin();
+  };
 
   return (
-    <Stack block compact>
-      <NumberInput
-        aria-label="Количество товара"
-        min={1}
-        value={quantity}
-        onValueChange={setQuantity}
-      />
-      <Button loading={isPending} onClick={submit} variant="primary">
-        Встать в очередь
-      </Button>
-    </Stack>
+    <Button loading={isPending} onClick={handleClick} variant="primary">
+      Встать в очередь
+    </Button>
   );
 };

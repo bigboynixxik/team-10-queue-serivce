@@ -10,6 +10,7 @@ type Props = PropsWithChildren<{
   cover?: ReactNode;
   title?: string;
   description?: string;
+  onClick?: () => void;
 }>;
 
 export const Card = ({
@@ -18,8 +19,19 @@ export const Card = ({
   cover,
   title,
   description,
+  onClick,
 }: Props): React.JSX.Element => (
-  <article className={[styles[bem()], className].filter(Boolean).join(' ')}>
+  <article
+    className={[styles[bem()], className].filter(Boolean).join(' ')}
+    onClick={onClick}
+    onKeyDown={(event) => {
+      if (onClick && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault();
+        onClick();
+      }
+    }}
+    tabIndex={onClick ? 0 : undefined}
+  >
     {cover && <div className={styles[bem('cover')]}>{cover}</div>}
     <div className={styles[bem('content')]}>
       {title && <h2 className={styles[bem('title')]}>{title}</h2>}

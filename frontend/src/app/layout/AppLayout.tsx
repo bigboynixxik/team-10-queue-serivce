@@ -1,6 +1,7 @@
+import { Outlet } from 'react-router-dom';
+
 import { useUserStore } from '@entities/user';
 import { cn } from '@shared/lib';
-import { Outlet } from 'react-router-dom';
 
 import styles from './AppLayout.module.css';
 

@@ -1,6 +1,5 @@
 .HomePage {
-  width: min(1120px, calc(100% - 32px));
-  margin: 0 auto;
+  margin-inline: 48px;
   padding: 48px 0 72px;
 }
 
