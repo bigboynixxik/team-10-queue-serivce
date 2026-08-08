@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom';
 
 import { useUserStore } from '@entities/user';
 import { cn } from '@shared/lib';
+import { Header } from '@widgets/header';
 
 import styles from './AppLayout.module.css';
 
@@ -12,6 +13,7 @@ export const AppLayout = (): React.JSX.Element => {
 
   return (
     <div className={styles[bem()]} data-user-id={userId}>
+      <Header />
       <Outlet />
     </div>
   );

@@ -1,0 +1,22 @@
+.Header {
+  position: absolute;
+  top: 14px;
+  left: 48px;
+}
+
+.Header__logo {
+  display: block;
+  width: 300px;
+  height: auto;
+}
+
+@media (max-width: 760px) {
+  .Header {
+    top: 16px;
+    left: 16px;
+  }
+
+  .Header__logo {
+    width: 146px;
+  }
+}

@@ -16,6 +16,7 @@
 }
 
 .Card__cover > img {
+  border-radius: 50px;
   display: block;
   width: 100%;
   aspect-ratio: 1;
@@ -35,6 +36,7 @@
 }
 
 .Card:hover .Card__title,
-.Card:hover .Card__description {
-  opacity: 0.8;
+.Card:hover .Card__description,
+.Card:hover .Card__content {
+  opacity: 0.6;
 }
