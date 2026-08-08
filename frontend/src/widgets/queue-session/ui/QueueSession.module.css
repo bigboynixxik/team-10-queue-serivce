@@ -1,0 +1,8 @@
+.QueueSession {
+  width: min(560px, 100%);
+}
+
+.QueueSession a {
+  display: flex;
+  margin-top: 24px;
+}

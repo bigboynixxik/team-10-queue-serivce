@@ -1,0 +1,31 @@
+.Alert {
+  border: 1px solid;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.Alert--error {
+  color: #991b1b;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.Alert--info {
+  color: #1e40af;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.Alert--success {
+  color: #166534;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.Alert__title {
+  display: block;
+}
+
+.Alert__description {
+  margin: 4px 0 0;
+}

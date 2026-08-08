@@ -1,0 +1,17 @@
+.Tag {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.Tag--success {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.Tag--neutral {
+  color: #334155;
+  background: #e2e8f0;
+}

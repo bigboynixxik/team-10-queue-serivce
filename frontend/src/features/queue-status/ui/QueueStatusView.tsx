@@ -1,6 +1,6 @@
 import type { Membership } from '@entities/queue';
 import type { Nullable } from '@shared/model';
-import { Alert, Descriptions, Tag } from '@ui';
+import { Alert, DescriptionList, Tag } from '@ui';
 
 const content = {
   QUEUED: ['Вы в очереди', 'Ожидайте, пока товар станет доступен.'],
@@ -16,32 +16,26 @@ type Props = {
   secondsLeft: Nullable<number>;
 };
 
-export const QueueStatusView = ({ membership, secondsLeft }: Props) => {
+export const QueueStatusView = ({ membership, secondsLeft }: Props): React.JSX.Element => {
   const [title, description] = content[membership.status];
   const deadline = secondsLeft === null ? null : `${secondsLeft} сек.`;
+  const items = [
+    { label: 'Статус', value: <Tag variant="success">{membership.status}</Tag> },
+    ...(membership.quantity ? [{ label: 'Количество', value: `${membership.quantity} шт.` }] : []),
+    ...(membership.available_quantity
+      ? [{ label: 'Доступно', value: `${membership.available_quantity} шт.` }]
+      : []),
+    ...(deadline ? [{ label: 'Осталось', value: deadline }] : []),
+  ];
 
   return (
     <>
       <Alert
-        type={membership.status === 'PURCHASED' ? 'success' : 'info'}
-        showIcon
-        message={title}
         description={description}
+        title={title}
+        variant={membership.status === 'PURCHASED' ? 'success' : 'info'}
       />
-      <Descriptions size="small" column={1} bordered>
-        <Descriptions.Item label="Статус">
-          <Tag color="green">{membership.status}</Tag>
-        </Descriptions.Item>
-        {membership.quantity && (
-          <Descriptions.Item label="Количество">{membership.quantity} шт.</Descriptions.Item>
-        )}
-        {membership.available_quantity && (
-          <Descriptions.Item label="Доступно">
-            {membership.available_quantity} шт.
-          </Descriptions.Item>
-        )}
-        {deadline && <Descriptions.Item label="Осталось">{deadline}</Descriptions.Item>}
-      </Descriptions>
+      <DescriptionList items={items} />
     </>
   );
 };

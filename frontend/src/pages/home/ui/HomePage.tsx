@@ -1,17 +1,14 @@
-import { Typography } from '@ui';
+import { cn } from '@shared/lib';
 import { ProductCatalog } from '@widgets/product-catalog';
 
-export function HomePage() {
+import styles from './HomePage.module.css';
+
+const bem = cn('HomePage');
+
+export const HomePage = (): React.JSX.Element => {
   return (
-    <main className="page-content">
-      <section className="hero">
-        <Typography.Title>Авито Очередь</Typography.Title>
-        <Typography.Paragraph>
-          Покупайте редкие товары честно: встаньте в очередь и получите время на оплату, когда товар
-          станет доступен.
-        </Typography.Paragraph>
-      </section>
+    <main className={styles[bem()]}>
       <ProductCatalog />
     </main>
   );
-}
+};
