@@ -1,5 +1,5 @@
 import { rightsMutations } from '@entities/queue';
-import { APP_BASENAME, CHECKOUT_BASE_URL } from '@shared/config';
+import { CHECKOUT_BASE_URL } from '@shared/config';
 import { useErrorNotifier } from '@shared/lib';
 import { useMutation } from '@tanstack/react-query';
 
@@ -8,10 +8,6 @@ const buildCheckoutUrl = (productId: string, token: string): string => {
 
   checkoutUrl.searchParams.set('token', token);
   checkoutUrl.searchParams.set('product_id', productId);
-  checkoutUrl.searchParams.set(
-    'return_url',
-    `${window.location.origin}${APP_BASENAME}/payment-success`,
-  );
 
   return checkoutUrl.toString();
 };
@@ -28,7 +24,9 @@ export const usePayment = (productId: string, token?: string) => {
 
     mutation.mutate(token, {
       onSuccess: () => {
-        window.open(buildCheckoutUrl(productId, token), '_blank', 'noopener,noreferrer');
+        // Without an opener the checkout tab is not script-closable, so it could
+        // not close itself after the payment.
+        window.open(buildCheckoutUrl(productId, token), 'avito-checkout');
       },
       onError: (error) => notifyError(error, 'Не удалось перейти к оплате'),
     });
