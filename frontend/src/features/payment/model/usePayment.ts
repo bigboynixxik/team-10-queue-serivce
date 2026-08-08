@@ -1,16 +1,8 @@
 import { rightsMutations } from '@entities/queue';
-import { CHECKOUT_BASE_URL } from '@shared/config';
 import { useErrorNotifier } from '@shared/lib';
 import { useMutation } from '@tanstack/react-query';
 
-const buildCheckoutUrl = (productId: string, token: string): string => {
-  const checkoutUrl = new URL('/checkout', CHECKOUT_BASE_URL);
-
-  checkoutUrl.searchParams.set('token', token);
-  checkoutUrl.searchParams.set('product_id', productId);
-
-  return checkoutUrl.toString();
-};
+import { buildCheckoutUrl } from './buildCheckoutUrl';
 
 export const usePayment = (productId: string, token?: string) => {
   const notifyError = useErrorNotifier();

@@ -1,19 +1,11 @@
-import {
-  isTerminalStatus,
-  type Membership,
-  queueQueries,
-  useMembershipLiveUpdates,
-} from '@entities/queue';
+import { type Membership, queueQueries, useMembershipLiveUpdates } from '@entities/queue';
 import { useUserStore } from '@entities/user';
 import type { Nullable } from '@shared/model';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
-const secondsToExpiry = (expiresAt?: string): Nullable<number> => {
-  if (!expiresAt) return null;
-
-  return Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000));
-};
+import { membershipRefetchInterval } from './membershipRefetchInterval';
+import { secondsToExpiry } from './secondsToExpiry';
 
 type QueueStatus = {
   membership: Nullable<Membership>;
@@ -27,7 +19,7 @@ export const useQueueStatus = (productId: string): QueueStatus => {
   const { data, isPending, isError } = useQuery({
     ...queueQueries.me(productId),
     enabled: Boolean(productId),
-    refetchInterval: (query) => (isTerminalStatus(query.state.data?.status) ? false : 2000),
+    refetchInterval: (query) => membershipRefetchInterval(query.state.data?.status),
   });
   const membership = data ?? null;
   const expiresAt = membership?.expires_at;

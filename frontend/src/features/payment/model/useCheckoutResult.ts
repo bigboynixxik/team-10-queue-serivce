@@ -3,15 +3,9 @@ import { CHECKOUT_BASE_URL } from '@shared/config';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
+import { isPaymentSucceeded } from './isPaymentSucceeded';
+
 const checkoutOrigin = new URL(CHECKOUT_BASE_URL, window.location.href).origin;
-
-const isPaymentSucceeded = (data: unknown): boolean => {
-  if (typeof data !== 'object' || data === null) return false;
-
-  const message = data as { source?: unknown; event?: unknown };
-
-  return message.source === 'avito-checkout' && message.event === 'payment_succeeded';
-};
 
 /**
  * The checkout tab closes itself right after the payment and tells this tab

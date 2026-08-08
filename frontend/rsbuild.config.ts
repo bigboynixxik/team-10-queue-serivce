@@ -24,6 +24,7 @@ export default defineConfig({
       '@entities': './src/entities',
       '@shared': './src/shared',
       '@ui': './src/shared/ui',
+      '@test': './test',
     },
   },
   server: {
