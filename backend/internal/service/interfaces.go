@@ -85,6 +85,10 @@ type CacheRepo interface {
 
 	// Requeue atomically puts a user back into the queue at their original position (used for rollbacks).
 	Requeue(ctx context.Context, productID string, userID string, score float64) error
+
+	// GetQueueMetrics retrieves the user's 0-indexed rank in the queue and the currently available stock.
+	// It uses a pipeline to minimize network round-trips for real-time ETA calculation.
+	GetQueueMetrics(ctx context.Context, productID string, userID string) (rank int, availableUnits int, err error)
 }
 
 // AvitoClient defines the contract for interacting with the external AvitoBackend API.

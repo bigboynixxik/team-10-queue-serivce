@@ -39,6 +39,7 @@ func (s *QueueServiceTestSuite) SetupTest() {
 		s.mockAvito,
 		2*time.Minute,
 		4*time.Minute,
+		75*time.Second,
 	)
 }
 
