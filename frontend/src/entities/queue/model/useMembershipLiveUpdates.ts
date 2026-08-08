@@ -2,7 +2,15 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import { QueueWs } from '../api/QueueWs';
+import type { Membership } from '../api/type';
 import { queueMembershipQueryKey } from './queries';
+
+const reconnectDelays = [1000, 2000, 5000, 10000];
+
+const isTerminalMembership = (membership?: Membership): boolean =>
+  membership?.status === 'DECLINED' ||
+  membership?.status === 'PURCHASED' ||
+  membership?.status === 'SOLD_OUT';
 
 /**
  * Pushes websocket updates straight into the React Query cache so the query
@@ -16,13 +24,48 @@ export const useMembershipLiveUpdates = (productId: string, userId: string): voi
     if (!productId || !userId) return;
 
     const queryKey = queueMembershipQueryKey(productId);
-    const socket = new QueueWs(productId, userId);
+    let disposed = false;
+    let reconnectAttempt = 0;
+    let reconnectTimer: number | undefined;
+    let socket: QueueWs | undefined;
 
-    socket.connect({
-      onMembership: (membership) => queryClient.setQueryData(queryKey, membership),
-      onError: () => queryClient.invalidateQueries({ queryKey }),
-    });
+    const shouldConnect = () =>
+      !disposed && !isTerminalMembership(queryClient.getQueryData<Membership>(queryKey));
 
-    return () => socket.disconnect();
+    const connect = () => {
+      if (!shouldConnect()) return;
+
+      const nextSocket = new QueueWs(productId, userId);
+      socket = nextSocket;
+
+      nextSocket.connect({
+        onMembership: (membership) => {
+          reconnectAttempt = 0;
+          queryClient.setQueryData(queryKey, membership);
+        },
+        onError: () => queryClient.invalidateQueries({ queryKey }),
+        onClose: () => {
+          if (disposed || socket !== nextSocket) return;
+
+          socket = undefined;
+          queryClient.invalidateQueries({ queryKey });
+
+          const delay = reconnectDelays[Math.min(reconnectAttempt, reconnectDelays.length - 1)];
+          reconnectAttempt += 1;
+          reconnectTimer = window.setTimeout(() => {
+            reconnectTimer = undefined;
+            connect();
+          }, delay);
+        },
+      });
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      socket?.disconnect();
+    };
   }, [productId, userId, queryClient]);
 };

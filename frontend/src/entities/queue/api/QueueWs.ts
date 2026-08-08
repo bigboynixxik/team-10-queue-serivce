@@ -5,6 +5,7 @@ import { type Membership, MembershipSchema } from './type';
 export type QueueWsListeners = {
   onMembership: (membership: Membership) => void;
   onError?: (error: unknown) => void;
+  onClose?: () => void;
 };
 
 export class QueueWs {
@@ -14,10 +15,20 @@ export class QueueWs {
     this.client = new WebSocketClient({ url: getWsUrl(productId, userId) });
   }
 
-  public connect({ onMembership, onError }: QueueWsListeners): void {
+  public connect({ onMembership, onError, onClose }: QueueWsListeners): void {
     this.client.connect({
-      onMessage: (payload) => onMembership(MembershipSchema.parse(payload)),
+      onMessage: (payload) => {
+        const result = MembershipSchema.safeParse(payload);
+
+        if (!result.success) {
+          onError?.(result.error);
+          return;
+        }
+
+        onMembership(result.data);
+      },
       onError,
+      onClose,
     });
   }
 
