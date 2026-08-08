@@ -1,7 +1,16 @@
-import { AppLayout } from '@app/layout/AppLayout';
-import { HomePage } from '@pages/home';
-import { QueuePage } from '@pages/queue';
+import { lazy } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
+
+import { AppLayout } from '@app/layout/AppLayout';
+import { APP_BASENAME } from '@shared/config';
+
+const HomePage = lazy(() =>
+	import('@pages/home').then(({ HomePage }) => ({ default: HomePage })),
+);
+
+const QueuePage = lazy(() =>
+	import('@pages/queue').then(({ QueuePage }) => ({ default: QueuePage })),
+);
 
 export const router = createBrowserRouter(
   [
@@ -14,13 +23,13 @@ export const router = createBrowserRouter(
           element: <HomePage />,
         },
         {
-          path: 'queue',
+          path: 'queue/:productId',
           element: <QueuePage />,
         },
       ],
     },
   ],
   {
-    basename: '/avito',
+    basename: APP_BASENAME,
   },
 );
