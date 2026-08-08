@@ -34,4 +34,8 @@ type QueueService interface {
 	// AdvanceQueue acts as an internal engine to push the queue forward when stock frees up.
 	// It is typically called internally after declines, expirations, or partial accepts.
 	AdvanceQueue(ctx context.Context, productID string) error
+
+	// CalculateETA computes the user's human-readable position in the queue (1-indexed)
+	// and the estimated wait time in seconds before they receive an offer or right.
+	CalculateETA(ctx context.Context, productID string, userID string) (position int, etaSeconds int, err error)
 }
