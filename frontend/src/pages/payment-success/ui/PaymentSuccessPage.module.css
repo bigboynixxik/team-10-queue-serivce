@@ -1,0 +1,65 @@
+.PaymentSuccessPage {
+  display: grid;
+  width: min(1120px, calc(100% - 32px));
+  min-height: 100vh;
+  place-items: center;
+  margin: 0 auto;
+  padding: 48px 0 72px;
+}
+
+.PaymentSuccessPage__card {
+  display: grid;
+  justify-items: center;
+  width: min(100%, 480px);
+  padding: 40px;
+  border-radius: 16px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.PaymentSuccessPage__icon {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  margin-bottom: 20px;
+  border-radius: 50%;
+  color: white;
+  background: #16a34a;
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.PaymentSuccessPage__title {
+  margin: 0;
+  font-size: 28px;
+}
+
+.PaymentSuccessPage__description {
+  margin: 12px 0 28px;
+  color: #64748b;
+}
+
+.PaymentSuccessPage__link {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  padding: 8px 20px;
+  color: white;
+  background: var(--brand);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+@media (max-width: 760px) {
+  .PaymentSuccessPage {
+    width: min(100% - 24px, 1120px);
+    padding-top: 24px;
+  }
+
+  .PaymentSuccessPage__card {
+    padding: 32px 24px;
+  }
+}

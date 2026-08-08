@@ -54,12 +54,5 @@
     "description": "Автоматическая кофемашина для любимых напитков.",
     "price": 54990,
     "image": "https://images.unsplash.com/photo-1517668808822-9ebb02f2a0e6?auto=format&fit=crop&w=900&q=80"
-  },
-  {
-    "id": "office-chair",
-    "title": "Кресло Ergohuman Elite 2",
-    "description": "Эргономичное кресло для комфортной работы за столом.",
-    "price": 64990,
-    "image": "https://images.unsplash.com/photo-1505843490701-5d8f2f2c1510?auto=format&fit=crop&w=900&q=80"
   }
 ]

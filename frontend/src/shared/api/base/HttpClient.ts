@@ -113,6 +113,10 @@ abstract class HttpClient {
   private handleError(error: AxiosError): Promise<never> {
     const status = error.response?.status ?? error.status;
     const messages = getApiErrorMessages(error, error.message);
+    const responseStatus =
+      typeof error.response?.data === 'object' && error.response.data !== null
+        ? (error.response.data as { status?: unknown }).status
+        : undefined;
 
     switch (status) {
       case 400:
@@ -121,6 +125,10 @@ abstract class HttpClient {
         return Promise.reject(new NoAccess());
       case 404:
         return Promise.reject(new NotFoundError(messages));
+      case 409:
+        return Promise.reject(
+          new HttpError(status, responseStatus === 'SOLD_OUT' ? 'Товара больше нет' : messages),
+        );
       case 500:
         return Promise.reject(new ServerError(messages));
       default:
