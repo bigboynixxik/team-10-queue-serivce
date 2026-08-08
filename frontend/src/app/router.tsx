@@ -1,13 +1,9 @@
 import { AppLayout } from '@app/layout/AppLayout';
 import { APP_BASENAME } from '@shared/config';
 import { lazy } from 'react';
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, redirect } from 'react-router-dom';
 
 const HomePage = lazy(() => import('@pages/home').then(({ HomePage }) => ({ default: HomePage })));
-
-const QueuePage = lazy(() =>
-  import('@pages/queue').then(({ QueuePage }) => ({ default: QueuePage })),
-);
 
 const PaymentSuccessPage = lazy(() =>
   import('@pages/payment-success').then(({ PaymentSuccessPage }) => ({
@@ -34,8 +30,9 @@ export const router = createBrowserRouter(
           element: <OrderInfoPage />,
         },
         {
+          // The queue lives on the product page now; old links must not dead-end.
           path: 'queue/:productId',
-          element: <QueuePage />,
+          loader: ({ params }) => redirect(`/order-info/${params.productId}`),
         },
         {
           path: 'payment-success',

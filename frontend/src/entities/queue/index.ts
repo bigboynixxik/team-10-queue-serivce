@@ -3,6 +3,7 @@ export type {
   JoinPayload,
   Membership,
   MembershipStatus,
+  QueueStats,
   UserQueue,
 } from './api/type';
 export { queueMutations } from './model/mutations';

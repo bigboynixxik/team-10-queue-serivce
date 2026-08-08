@@ -7,6 +7,8 @@ import {
   JoinPayloadSchema,
   type Membership,
   MembershipSchema,
+  type QueueStats,
+  QueueStatsSchema,
 } from './type';
 
 class QueueApi extends HttpClient {
@@ -25,6 +27,10 @@ class QueueApi extends HttpClient {
 
   public async getMe(productId: string): Promise<Membership> {
     return MembershipSchema.parse(await this.get<unknown>({ uri: `/${productId}/members/me` }));
+  }
+
+  public async getStats(productId: string): Promise<QueueStats> {
+    return QueueStatsSchema.parse(await this.get<unknown>({ uri: `/${productId}/stats` }));
   }
 
   public async acceptOffer(productId: string, payload: AcceptOfferPayload): Promise<Membership> {

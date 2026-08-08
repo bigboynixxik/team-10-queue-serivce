@@ -48,7 +48,7 @@ export const MyQueuesMenu = (): React.JSX.Element => {
 
   const openQueue = (productId: string) => {
     setIsOpen(false);
-    navigate(`/queue/${productId}`);
+    navigate(`/order-info/${productId}`);
   };
 
   return (

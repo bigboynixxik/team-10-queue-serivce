@@ -1,20 +1,18 @@
-import { useMutation } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
-
 import type { Product } from '@entities/product';
 import { queueMutations } from '@entities/queue';
 import { useErrorNotifier } from '@shared/lib';
+import { useMutation } from '@tanstack/react-query';
 
 export const useJoinQueue = (product: Product) => {
-  const navigate = useNavigate();
   const notifyError = useErrorNotifier();
   const mutation = useMutation(queueMutations.join(product.id));
 
+  // The queue is shown on the product page itself, so joining navigates nowhere:
+  // the refreshed membership switches the page into its queued state in place.
   const join = (quantity: number) => {
     mutation.mutate(
       { quantity },
       {
-        onSuccess: () => navigate(`/queue/${product.id}`),
         onError: (error) => notifyError(error, 'Не удалось встать в очередь'),
       },
     );

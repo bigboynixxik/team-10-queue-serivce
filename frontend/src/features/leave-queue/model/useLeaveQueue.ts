@@ -1,16 +1,15 @@
 import { queueMutations } from '@entities/queue';
 import { useErrorNotifier } from '@shared/lib';
 import { useMutation } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
 
 export const useLeaveQueue = (productId: string) => {
   const notifyError = useErrorNotifier();
-  const navigate = useNavigate();
   const mutation = useMutation(queueMutations.declineOffer(productId));
 
+  // Leaving happens on the product page, so the user stays there and can join
+  // again — for a different quantity, for instance.
   const leaveQueue = () => {
     mutation.mutate(undefined, {
-      onSuccess: () => navigate('/'),
       onError: (error) => notifyError(error, 'Не удалось выйти из очереди'),
     });
   };

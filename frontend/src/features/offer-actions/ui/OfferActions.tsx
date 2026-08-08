@@ -1,27 +1,49 @@
-import { Button, NumberInput, Stack } from '@ui';
+import { cn } from '@shared/lib';
+import { Alert, Button } from '@ui';
 
-import { useOfferActionsForm } from '../model/useOfferActionsForm';
+import { useOfferActions } from '../model/useOfferActions';
+import styles from './OfferActions.module.css';
+
+const bem = cn('OfferActions');
 
 type Props = {
   productId: string;
   availableQuantity: number;
+  requestedQuantity?: number;
 };
 
-export const OfferActions = ({ productId, availableQuantity }: Props): React.JSX.Element => {
-  const { quantity, setQuantity, accept, decline, isPending } = useOfferActionsForm(
-    productId,
-    availableQuantity,
-  );
+const describeShortage = (availableQuantity: number, requestedQuantity?: number): string =>
+  requestedQuantity === undefined
+    ? `Осталось только ${availableQuantity} шт.`
+    : `Вы выбрали ${requestedQuantity} шт., а осталось только ${availableQuantity} шт.`;
+
+export const OfferActions = ({
+  productId,
+  availableQuantity,
+  requestedQuantity,
+}: Props): React.JSX.Element => {
+  const { accept, decline, isPending } = useOfferActions(productId);
 
   return (
-    <Stack wrap>
-      <NumberInput min={1} max={availableQuantity} value={quantity} onValueChange={setQuantity} />
-      <Button loading={isPending} onClick={accept} variant="primary">
-        Принять предложение
-      </Button>
-      <Button loading={isPending} onClick={decline} variant="danger">
-        Отказаться
-      </Button>
-    </Stack>
+    <div className={styles[bem()]}>
+      <Alert
+        description={`${describeShortage(availableQuantity, requestedQuantity)} Примите доступное количество или откажитесь от заказа.`}
+        title="Товаров меньше, чем вы выбрали"
+        variant="error"
+      />
+      <div className={styles[bem('buttons')]}>
+        <Button
+          loading={isPending}
+          onClick={() => accept({ quantity: availableQuantity })}
+          size="large"
+          variant="primary"
+        >
+          Принять
+        </Button>
+        <Button loading={isPending} onClick={decline} size="large" variant="danger">
+          Отказаться
+        </Button>
+      </div>
+    </div>
   );
 };

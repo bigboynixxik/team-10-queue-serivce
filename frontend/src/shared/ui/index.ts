@@ -4,6 +4,7 @@ export { Card } from './card/Card';
 export { type DescriptionItem, DescriptionList } from './description-list/DescriptionList';
 export { Heading } from './heading/Heading';
 export { NumberInput } from './number-input/NumberInput';
+export { QuantityStepper } from './quantity-stepper/QuantityStepper';
 export { Spinner } from './spinner/Spinner';
 export { Stack } from './stack/Stack';
 export { Tag } from './tag/Tag';

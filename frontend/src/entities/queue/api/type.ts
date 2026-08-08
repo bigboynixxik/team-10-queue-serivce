@@ -27,6 +27,14 @@ export const UserQueuesSchema = z.array(UserQueueSchema);
 
 export const RightValidationSchema = z.object({ valid: z.literal(true) });
 
+export const QueueStatsSchema = z.object({
+  waiting: z.number().int().nonnegative(),
+  holding_right: z.number().int().nonnegative(),
+  pending_offer: z.number().int().nonnegative(),
+  available: z.number().int().nonnegative(),
+  product_count: z.number().int().nonnegative(),
+});
+
 export const JoinPayloadSchema = z.object({
   quantity: z.number().int().positive(),
 });
@@ -34,6 +42,7 @@ export const JoinPayloadSchema = z.object({
 export const AcceptOfferPayloadSchema = JoinPayloadSchema;
 
 export type Membership = z.infer<typeof MembershipSchema>;
+export type QueueStats = z.infer<typeof QueueStatsSchema>;
 export type MembershipStatus = z.infer<typeof MembershipStatusSchema>;
 export type UserQueue = z.infer<typeof UserQueueSchema>;
 export type JoinPayload = z.infer<typeof JoinPayloadSchema>;
