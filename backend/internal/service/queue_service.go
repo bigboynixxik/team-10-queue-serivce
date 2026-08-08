@@ -17,11 +17,12 @@ import (
 
 // QueueService orchestrates the queue state machine, durable storage, and fast cache.
 type QueueService struct {
-	durable    DurableRepo
-	cache      CacheRepo
-	avito      AvitoClient
-	offerTTL   time.Duration
-	paymentTTL time.Duration
+	durable        DurableRepo
+	cache          CacheRepo
+	avito          AvitoClient
+	offerTTL       time.Duration
+	paymentTTL     time.Duration
+	avgPaymentTime time.Duration
 }
 
 // NewQueueService constructs a new QueueService.
@@ -31,13 +32,15 @@ func NewQueueService(
 	avito AvitoClient,
 	offerTTL time.Duration,
 	paymentTTL time.Duration,
+	avgPaymentTime time.Duration,
 ) *QueueService {
 	return &QueueService{
-		durable:    durable,
-		cache:      cache,
-		avito:      avito,
-		offerTTL:   offerTTL,
-		paymentTTL: paymentTTL,
+		durable:        durable,
+		cache:          cache,
+		avito:          avito,
+		offerTTL:       offerTTL,
+		paymentTTL:     paymentTTL,
+		avgPaymentTime: avgPaymentTime,
 	}
 }
 

@@ -55,6 +55,9 @@ type Config struct {
 	// ExpirationInterval is how often the background worker looks for expired
 	// rights and offers.
 	ExpirationInterval time.Duration `env:"EXPIRATION_INTERVAL" envDefault:"1s"`
+
+	// AvgPaymentTime is the estimated duration a single user takes to complete a purchase.
+	AvgPaymentTime time.Duration `env:"AVG_PAYMENT_TIME" envDefault:"75s"`
 }
 
 // Load reads the configuration from the .env file and environment variables.
