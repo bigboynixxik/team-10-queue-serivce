@@ -4,7 +4,6 @@ import { Card } from '@ui';
 
 import { useJoinQueueForm } from '../model/useJoinQueueForm';
 
-import { JoinQueueButton } from './JoinQueueButton';
 import styles from './JoinQueueProductCard.module.css';
 
 const bem = cn('JoinQueueProductCard');
@@ -14,7 +13,7 @@ type Props = {
 };
 
 export const JoinQueueProductCard = ({ product }: Props): React.JSX.Element => {
-  const { submit, isPending } = useJoinQueueForm(product);
+  const { submit } = useJoinQueueForm(product);
 
   return (
     <Card
@@ -24,7 +23,6 @@ export const JoinQueueProductCard = ({ product }: Props): React.JSX.Element => {
       title={product.title}
     >
       <p className={styles[bem('price')]}>{product.price.toLocaleString('ru-RU')} ₽</p>
-      <JoinQueueButton isPending={isPending} onJoin={submit} />
     </Card>
   );
 };
