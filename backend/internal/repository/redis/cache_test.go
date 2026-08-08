@@ -110,7 +110,7 @@ func (s *CacheTestSuite) TestTryAllocate_Branches() {
 
 	alloc, avail, soldOut, err = s.repo.TryAllocate(s.ctx, "prod-2", 2)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), 2, alloc)
+	require.Equal(s.T(), 0, alloc)
 	require.Equal(s.T(), 0, avail)
 	require.False(s.T(), soldOut)
 
@@ -128,6 +128,28 @@ func (s *CacheTestSuite) TestTryAllocate_Branches() {
 	require.Equal(s.T(), 0, alloc)
 	require.Equal(s.T(), 0, avail)
 	require.True(s.T(), soldOut)
+}
+
+func (s *CacheTestSuite) TestTryAllocate_PartialOfferReservesAvailableUnits() {
+	err := s.repo.InitStock(s.ctx, "prod-partial-reservation", 5)
+	require.NoError(s.T(), err)
+
+	alloc, avail, soldOut, err := s.repo.TryAllocate(s.ctx, "prod-partial-reservation", 7)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 5, avail)
+	require.False(s.T(), soldOut)
+
+	stock, err := s.client.HGetAll(s.ctx, "stock:prod-partial-reservation").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "5", stock["product_count"])
+	require.Equal(s.T(), "0", stock["available_units"])
+
+	alloc, avail, soldOut, err = s.repo.TryAllocate(s.ctx, "prod-partial-reservation", 1)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 0, avail)
+	require.False(s.T(), soldOut)
 }
 
 func (s *CacheTestSuite) TestTryAllocate_RaceCondition() {
@@ -170,6 +192,55 @@ func (s *CacheTestSuite) TestTryAllocate_RaceCondition() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "5", res["product_count"])
 	require.Equal(s.T(), "0", res["available_units"])
+}
+
+func (s *CacheTestSuite) TestTryAllocate_PartialOfferRaceCondition() {
+	err := s.repo.InitStock(s.ctx, "prod-partial-race", 5)
+	require.NoError(s.T(), err)
+
+	const workers = 50
+
+	var wg sync.WaitGroup
+	var partialOfferCount int32
+	var queuedCount int32
+	var errorCount int32
+
+	wg.Add(workers)
+	start := make(chan struct{})
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+
+			alloc, avail, soldOut, errAlloc := s.repo.TryAllocate(s.ctx, "prod-partial-race", 10)
+			if errAlloc != nil {
+				atomic.AddInt32(&errorCount, 1)
+				return
+			}
+
+			switch {
+			case alloc == 0 && avail == 5 && !soldOut:
+				atomic.AddInt32(&partialOfferCount, 1)
+			case alloc == 0 && avail == 0 && !soldOut:
+				atomic.AddInt32(&queuedCount, 1)
+			default:
+				atomic.AddInt32(&errorCount, 1)
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	require.Equal(s.T(), int32(1), partialOfferCount)
+	require.Equal(s.T(), int32(workers-1), queuedCount)
+	require.Equal(s.T(), int32(0), errorCount)
+
+	stock, err := s.client.HGetAll(s.ctx, "stock:prod-partial-race").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "5", stock["product_count"])
+	require.Equal(s.T(), "0", stock["available_units"])
 }
 
 func (s *CacheTestSuite) TestQueue_FIFOBehavior() {
@@ -329,6 +400,31 @@ func (s *CacheTestSuite) TestRestoreAvailableUnits() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "10", res["available_units"])
 	require.Equal(s.T(), "10", res["product_count"])
+}
+
+func (s *CacheTestSuite) TestRestoreAvailableUnits_AfterPartialOffer() {
+	err := s.repo.InitStock(s.ctx, "prod-partial-restore", 5)
+	require.NoError(s.T(), err)
+
+	alloc, avail, soldOut, err := s.repo.TryAllocate(s.ctx, "prod-partial-restore", 7)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 5, avail)
+	require.False(s.T(), soldOut)
+
+	err = s.repo.RestoreAvailableUnits(s.ctx, "prod-partial-restore", avail)
+	require.NoError(s.T(), err)
+
+	stock, err := s.client.HGetAll(s.ctx, "stock:prod-partial-restore").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "5", stock["product_count"])
+	require.Equal(s.T(), "5", stock["available_units"])
+
+	alloc, avail, soldOut, err = s.repo.TryAllocate(s.ctx, "prod-partial-restore", 5)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 5, alloc)
+	require.Equal(s.T(), 0, avail)
+	require.False(s.T(), soldOut)
 }
 
 func (s *CacheTestSuite) TestGetFirstInQueue() {
