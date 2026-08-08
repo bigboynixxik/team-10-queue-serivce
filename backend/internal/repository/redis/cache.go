@@ -458,3 +458,40 @@ func (c *CacheRepo) Requeue(ctx context.Context, productID string, userID string
 	}
 	return nil
 }
+
+// GetQueueMetrics retrieves the user's 0-indexed rank in the queue and the currently available stock.
+// It uses a pipeline to fetch both values in a single network round-trip.
+func (c *CacheRepo) GetQueueMetrics(ctx context.Context, productID string, userID string) (int, int, error) {
+	queueKey := fmt.Sprintf("queue:%s", productID)
+	stockKey := fmt.Sprintf("stock:%s", productID)
+
+	pipe := c.client.Pipeline()
+	rankCmd := pipe.ZRank(ctx, queueKey, userID)
+	availCmd := pipe.HGet(ctx, stockKey, "available_units")
+
+	// Exec returns redis.Nil if ANY of the pipeline commands return redis.Nil.
+	// We safely ignore it here and check the specific command results below.
+	_, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return 0, 0, fmt.Errorf("redis.CacheRepo.GetQueueMetrics pipeline exec: %w", err)
+	}
+
+	rank, err := rankCmd.Result()
+	if errors.Is(err, redis.Nil) {
+		// User is completely out of the ZSET queue.
+		return 0, 0, models.ErrMembershipNotFound
+	} else if err != nil {
+		return 0, 0, fmt.Errorf("redis.CacheRepo.GetQueueMetrics rank: %w", err)
+	}
+
+	var available int
+	availStr, err := availCmd.Result()
+	if err == nil && availStr != "" {
+		if parsed, parseErr := strconv.Atoi(availStr); parseErr == nil {
+			available = parsed
+		}
+	}
+
+	// rank is 0-indexed. The mathematical offset is handled in the service layer.
+	return int(rank), available, nil
+}
