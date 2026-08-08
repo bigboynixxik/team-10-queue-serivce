@@ -9,3 +9,11 @@
 
 .idea/
 *.env
+
+# frontend
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+

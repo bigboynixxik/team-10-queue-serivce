@@ -1,0 +1,53 @@
+run:
+  timeout: 5m
+
+linters-settings:
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+  gocyclo:
+    min-complexity: 15
+  goimports:
+    local-prefixes: backend
+  depguard:
+    rules:
+      models-layer:
+        files:
+          - "**/internal/models/**/*.go"
+        allow:
+          - $gostd
+          - github.com/google/uuid
+        deny:
+          - pkg: github.com/jackc/pgx
+          - pkg: github.com/Masterminds/squirrel
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - gocyclo
+    - goimports
+    - bodyclose
+    - depguard
+    - gosec
+    - gocritic
+    - revive
+    - err113
+    - errorlint
+    - sqlclosecheck
+    - noctx
+
+issues:
+  exclude-use-default: false
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - err113
+        - bodyclose
