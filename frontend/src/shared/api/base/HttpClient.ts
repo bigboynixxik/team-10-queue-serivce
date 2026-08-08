@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '@shared/config';
+import { API_BASE_URL, USER_ID_STORAGE_KEY } from '@shared/config';
 import axios, {
   type AxiosError,
   type AxiosInstance,
@@ -49,6 +49,13 @@ abstract class HttpClient {
       (response: AxiosResponse) => response,
       (error: AxiosError) => this.handleError(error),
     );
+    this.instance.interceptors.request.use((config) => {
+      const userId = localStorage.getItem(USER_ID_STORAGE_KEY);
+
+      if (userId) config.headers.set('X-User-Id', userId);
+
+      return config;
+    });
   }
 
   protected get uri(): string {
@@ -101,14 +108,6 @@ abstract class HttpClient {
     return this.instance
       .delete<Response>(uri, config)
       .then((response: AxiosResponse<Response>) => response.data);
-  }
-
-  protected getTokenConfig(token: string): AxiosRequestConfig {
-    return {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    };
   }
 
   private handleError(error: AxiosError): Promise<never> {
