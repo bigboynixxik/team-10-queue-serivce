@@ -22,6 +22,13 @@ type QueueService interface {
 	// how many are mid-purchase, and how much stock is left.
 	GetQueueStats(ctx context.Context, productID string) (*models.QueueStats, error)
 
+	// GetUserQueue returns one membership together with the user's place in it.
+	GetUserQueue(ctx context.Context, productID, userID string) (*models.UserQueue, error)
+
+	// GetUserQueues returns every queue the user takes part in, each with their
+	// position and estimated wait.
+	GetUserQueues(ctx context.Context, userID string) ([]*models.UserQueue, error)
+
 	// AcceptOffer confirms a partial offer. The user can accept less than initially offered.
 	// Any unused quantity is automatically returned to the pool for the next in line.
 	AcceptOffer(ctx context.Context, productID, userID string, acceptedQuantity int) (*models.Right, error)
