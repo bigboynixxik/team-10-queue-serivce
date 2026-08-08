@@ -1,0 +1,23 @@
+[
+  {
+    "id": "wireless-headphones",
+    "title": "Беспроводные наушники Air",
+    "description": "Лёгкие наушники с активным шумоподавлением.",
+    "price": 12990,
+    "image": "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=900&q=80"
+  },
+  {
+    "id": "gaming-console",
+    "title": "Игровая консоль Nova",
+    "description": "Компактная консоль нового поколения для дома.",
+    "price": 49990,
+    "image": "https://images.unsplash.com/photo-1606144042614-b2417e99c4e3?auto=format&fit=crop&w=900&q=80"
+  },
+  {
+    "id": "smart-watch",
+    "title": "Умные часы Pulse",
+    "description": "Отслеживают тренировки, сон и уведомления.",
+    "price": 18990,
+    "image": "https://images.unsplash.com/photo-1524805444758-089113d48a6d?auto=format&fit=crop&w=900&q=80"
+  }
+]
