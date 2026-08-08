@@ -22,9 +22,14 @@ type DurableRepo interface {
 	// It handles (product_id, user_id) conflicts gracefully.
 	UpsertMembership(ctx context.Context, membership *models.QueueMembership) error
 
-	// UpdateStockAndRightTx atomically marks a right as USED and decrements the product_stock.
-	// This represents the final confirmation of a successful payment.
-	UpdateStockAndRightTx(ctx context.Context, token string, orderID string, quantity int) error
+	// UseRightTx atomically locks an ACTIVE right, marks it as USED, and decrements
+	// product_stock using the quantity stored with the right. transitioned is false
+	// for an already processed webhook, so external side effects are not repeated.
+	UseRightTx(ctx context.Context, token string, orderID string, now time.Time) (right *models.Right, transitioned bool, err error)
+
+	// ExpireRightAndUpsertMembershipTx atomically marks an ACTIVE right as EXPIRED
+	// and persists the corresponding terminal membership state.
+	ExpireRightAndUpsertMembershipTx(ctx context.Context, token string, membership *models.QueueMembership) (right *models.Right, transitioned bool, err error)
 
 	// SaveInitialStock persists the physical stock fetched from AvitoBackend.
 	SaveInitialStock(ctx context.Context, stock *models.ProductStock) error
