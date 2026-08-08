@@ -54,6 +54,9 @@
 }
 
 .MyQueuesMenu__queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   width: 100%;
   border: 0;
   border-radius: 8px;
@@ -65,6 +68,12 @@
   text-align: left;
   cursor: pointer;
   transition: background-color 150ms ease;
+}
+
+.MyQueuesMenu__queue-position {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
 }
 
 .MyQueuesMenu__queue:hover,

@@ -84,7 +84,14 @@ export const MyQueuesMenu = (): React.JSX.Element => {
                 role="menuitem"
                 type="button"
               >
-                <span>{productTitles.get(queue.product_id) ?? queue.product_id}</span>
+                <span className={styles[bem('queue-title')]}>
+                  {productTitles.get(queue.product_id) ?? queue.product_id}
+                </span>
+                {queue.status === 'QUEUED' && queue.position !== undefined && (
+                  <span className={styles[bem('queue-position')]}>
+                    Место в очереди: {queue.position}
+                  </span>
+                )}
               </button>
             ))}
           </div>
