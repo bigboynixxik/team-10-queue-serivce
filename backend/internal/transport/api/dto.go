@@ -40,6 +40,36 @@ type membershipResponse struct {
 	Quantity          int                     `json:"quantity,omitempty"`
 	AvailableQuantity int                     `json:"available_quantity,omitempty"`
 	ExpiresAt         *time.Time              `json:"expires_at,omitempty"`
+	Position          int                     `json:"position,omitempty"`
+	ETASeconds        int                     `json:"eta_seconds,omitempty"`
+}
+
+// userQueueResponse is one row of the «Мои очереди» list: the same membership
+// shape the single-queue endpoint returns, plus the product it belongs to.
+type userQueueResponse struct {
+	ProductID string `json:"product_id"`
+	membershipResponse
+}
+
+func newUserQueueResponse(q *models.UserQueue) userQueueResponse {
+	if q == nil || q.Membership == nil {
+		return userQueueResponse{}
+	}
+
+	resp := newMembershipResponse(q.Membership)
+	resp.Position = q.Position
+	resp.ETASeconds = int(q.ETA.Seconds())
+
+	return userQueueResponse{ProductID: q.Membership.ProductID, membershipResponse: resp}
+}
+
+func newUserQueuesResponse(queues []*models.UserQueue) []userQueueResponse {
+	out := make([]userQueueResponse, 0, len(queues))
+	for _, q := range queues {
+		out = append(out, newUserQueueResponse(q))
+	}
+
+	return out
 }
 
 func newMembershipResponse(m *models.QueueMembership) membershipResponse {

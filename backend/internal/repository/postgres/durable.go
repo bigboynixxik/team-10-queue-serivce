@@ -236,3 +236,50 @@ func (dr *DurableRepo) CountMembershipsByStatus(ctx context.Context, productID s
 
 	return counts, nil
 }
+
+// ListMembershipsByUser returns every queue the user takes part in, newest first.
+//
+// Postgres is the only place this can come from: Redis keys are shaped
+// member:{product_id}:{user_id} and cannot be searched by their tail without a
+// KEYS sweep. This is a screen read, not the allocation path, so the round trip
+// is affordable — see the index added in 002_membership_user_index.sql.
+func (dr *DurableRepo) ListMembershipsByUser(ctx context.Context, userID string) ([]*models.QueueMembership, error) {
+	query, args, err := dr.sq.Select(
+		"id", "product_id", "user_id", "status", "quantity",
+		"available_quantity", "current_token", "expires_at", "created_at", "updated_at",
+	).
+		From("queue_memberships").
+		Where(sq.Eq{"user_id": userID}).
+		OrderBy("created_at DESC").
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.ListMembershipsByUser query build: %w", err)
+	}
+
+	rows, err := dr.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.ListMembershipsByUser execute: %w", err)
+	}
+	defer rows.Close()
+
+	memberships := make([]*models.QueueMembership, 0)
+
+	for rows.Next() {
+		m := &models.QueueMembership{}
+
+		if err := rows.Scan(
+			&m.ID, &m.ProductID, &m.UserID, &m.Status, &m.Quantity,
+			&m.AvailableQuantity, &m.CurrentToken, &m.ExpiresAt, &m.CreatedAt, &m.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.ListMembershipsByUser scan: %w", err)
+		}
+
+		memberships = append(memberships, m)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.ListMembershipsByUser rows: %w", err)
+	}
+
+	return memberships, nil
+}

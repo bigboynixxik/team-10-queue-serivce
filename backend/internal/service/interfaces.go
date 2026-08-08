@@ -32,6 +32,9 @@ type DurableRepo interface {
 	// CountMembershipsByStatus reports how many users sit in each status for a
 	// product. Reporting read, not part of the allocation path.
 	CountMembershipsByStatus(ctx context.Context, productID string) (map[models.MembershipStatus]int, error)
+
+	// ListMembershipsByUser returns every queue the user takes part in.
+	ListMembershipsByUser(ctx context.Context, userID string) ([]*models.QueueMembership, error)
 }
 
 // CacheRepo defines the contract for high-speed, concurrency-safe storage (Redis).

@@ -72,6 +72,21 @@ func (mr *MockDurableRepoMockRecorder) GetRightByToken(ctx, token any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRightByToken", reflect.TypeOf((*MockDurableRepo)(nil).GetRightByToken), ctx, token)
 }
 
+// ListMembershipsByUser mocks base method.
+func (m *MockDurableRepo) ListMembershipsByUser(ctx context.Context, userID string) ([]*models.QueueMembership, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListMembershipsByUser", ctx, userID)
+	ret0, _ := ret[0].([]*models.QueueMembership)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListMembershipsByUser indicates an expected call of ListMembershipsByUser.
+func (mr *MockDurableRepoMockRecorder) ListMembershipsByUser(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListMembershipsByUser", reflect.TypeOf((*MockDurableRepo)(nil).ListMembershipsByUser), ctx, userID)
+}
+
 // SaveInitialStock mocks base method.
 func (m *MockDurableRepo) SaveInitialStock(ctx context.Context, stock *models.ProductStock) error {
 	m.ctrl.T.Helper()
