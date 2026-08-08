@@ -44,6 +44,7 @@ var (
 		end
 
 		if avail > 0 then
+			redis.call('HINCRBY', stockKey, 'available_units', -avail)
 			return {0, avail, 0}
 		end
 
