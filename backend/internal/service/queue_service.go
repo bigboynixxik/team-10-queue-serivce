@@ -270,37 +270,81 @@ func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string
 // DeclineOffer rejects a pending offer. The reserved stock is entirely returned
 // to the available pool, and the queue is advanced.
 func (s *QueueService) DeclineOffer(ctx context.Context, productID, userID string) error {
+	return s.leaveQueue(ctx, productID, userID, true)
+}
+
+// LeaveQueue ends a user's participation when they are queued, considering a
+// partial offer, or hold an active purchase right.
+func (s *QueueService) LeaveQueue(ctx context.Context, productID, userID string) error {
+	return s.leaveQueue(ctx, productID, userID, false)
+}
+
+func (s *QueueService) leaveQueue(ctx context.Context, productID, userID string, offerOnly bool) error {
 	log := logger.FromContext(ctx)
 
 	mem, err := s.cache.GetMembership(ctx, productID, userID)
 	if err != nil {
-		return fmt.Errorf("service.DeclineOffer get membership: %w", err)
+		return fmt.Errorf("service.leaveQueue get membership: %w", err)
 	}
 
 	if mem.ExpiresAt != nil && time.Now().UTC().After(*mem.ExpiresAt) {
 		return models.ErrTokenExpired
 	}
 
-	if mem.Status != models.MembershipStatusOfferPending || mem.AvailableQuantity == nil {
+	if offerOnly && mem.Status != models.MembershipStatusOfferPending {
 		return models.ErrInvalidStatus
 	}
 
-	returnedQty := *mem.AvailableQuantity
+	returnedQty := 0
+	removeFromQueue := false
+	removeExpiryTimer := false
+
+	switch mem.Status {
+	case models.MembershipStatusQueued:
+		if offerOnly {
+			return models.ErrInvalidStatus
+		}
+		removeFromQueue = true
+	case models.MembershipStatusOfferPending:
+		if mem.AvailableQuantity == nil {
+			return models.ErrInvalidStatus
+		}
+		returnedQty = *mem.AvailableQuantity
+		removeExpiryTimer = true
+	case models.MembershipStatusRightActive:
+		if offerOnly {
+			return models.ErrInvalidStatus
+		}
+		returnedQty = mem.Quantity
+		removeExpiryTimer = true
+	default:
+		return models.ErrInvalidStatus
+	}
+
 	now := time.Now().UTC()
 
 	mem.Status = models.MembershipStatusDeclined
 	mem.AvailableQuantity = nil
+	mem.CurrentToken = nil
 	mem.ExpiresAt = nil
 	mem.UpdatedAt = now
 
 	if err := s.durable.UpsertMembership(ctx, mem); err != nil {
-		return fmt.Errorf("service.DeclineOffer upsert final state: %w", err)
+		return fmt.Errorf("service.leaveQueue upsert final state: %w", err)
 	}
 
 	s.syncCacheState(ctx, mem, nil)
 
-	if err := s.cache.RemoveFromExpiryTimer(ctx, productID, userID); err != nil {
-		log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", err))
+	if removeFromQueue {
+		if err := s.cache.RemoveFromQueue(ctx, productID, userID); err != nil {
+			log.ErrorContext(ctx, "failed to remove user from queue", slog.Any("error", err))
+		}
+	}
+
+	if removeExpiryTimer {
+		if err := s.cache.RemoveFromExpiryTimer(ctx, productID, userID); err != nil {
+			log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", err))
+		}
 	}
 
 	if returnedQty > 0 {
@@ -308,7 +352,7 @@ func (s *QueueService) DeclineOffer(ctx context.Context, productID, userID strin
 			log.ErrorContext(ctx, "failed to restore unused units", slog.Any("error", err))
 		}
 		if err := s.AdvanceQueue(ctx, productID); err != nil {
-			log.ErrorContext(ctx, "failed to advance queue after decline", slog.Any("error", err))
+			log.ErrorContext(ctx, "failed to advance queue after leaving", slog.Any("error", err))
 		}
 	}
 

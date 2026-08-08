@@ -81,7 +81,7 @@ func (h *QueueHandler) acceptOffer(w http.ResponseWriter, r *http.Request) {
 
 // leave handles DELETE /queue/{product_id}/members/me.
 func (h *QueueHandler) leave(w http.ResponseWriter, r *http.Request) {
-	err := h.service.DeclineOffer(r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()))
+	err := h.service.LeaveQueue(r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()))
 	if err != nil {
 		writeError(w, r, err)
 		return
