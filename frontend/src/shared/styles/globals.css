@@ -8,9 +8,6 @@ body {
   min-width: 320px;
   margin: 0;
   color: var(--ink);
-  background:
-    radial-gradient(circle at 10% 0%, #dcfce7 0, transparent 30rem),
-    linear-gradient(135deg, #f8fafc, #eefbf4);
 }
 
 * {
