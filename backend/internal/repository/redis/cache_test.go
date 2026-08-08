@@ -514,3 +514,80 @@ func (s *CacheTestSuite) TestRequeue() {
 	require.Equal(s.T(), "user-req", res[0].Member)
 	require.Equal(s.T(), 42.5, res[0].Score)
 }
+
+// TestGetQueueMetrics_Success verifies that the method correctly retrieves
+// the user's rank and the available stock when both exist in the database.
+func (s *CacheTestSuite) TestGetQueueMetrics_Success() {
+	err := s.repo.InitStock(s.ctx, "prod-metrics-1", 10)
+	require.NoError(s.T(), err)
+
+	_, _, _, err = s.repo.TryAllocate(s.ctx, "prod-metrics-1", 3)
+	require.NoError(s.T(), err)
+
+	err = s.repo.Enqueue(s.ctx, "prod-metrics-1", "user-1")
+	require.NoError(s.T(), err)
+
+	err = s.repo.Enqueue(s.ctx, "prod-metrics-1", "user-2")
+	require.NoError(s.T(), err)
+
+	rank, avail, err := s.repo.GetQueueMetrics(s.ctx, "prod-metrics-1", "user-2")
+
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, rank)
+	require.Equal(s.T(), 7, avail)
+}
+
+// TestGetQueueMetrics_NotInQueue verifies that querying metrics for a user
+// who is not in the queue returns an appropriate domain error.
+func (s *CacheTestSuite) TestGetQueueMetrics_NotInQueue() {
+	err := s.repo.InitStock(s.ctx, "prod-metrics-2", 10)
+	require.NoError(s.T(), err)
+
+	rank, avail, err := s.repo.GetQueueMetrics(s.ctx, "prod-metrics-2", "ghost-user")
+
+	require.ErrorIs(s.T(), err, models.ErrMembershipNotFound)
+	require.Equal(s.T(), 0, rank)
+	require.Equal(s.T(), 0, avail)
+}
+
+// TestGetQueueMetrics_NoStockData verifies that if the stock hash is not initialized,
+// the method safely defaults available units to zero without failing.
+func (s *CacheTestSuite) TestGetQueueMetrics_NoStockData() {
+	err := s.repo.Enqueue(s.ctx, "prod-metrics-3", "user-1")
+	require.NoError(s.T(), err)
+
+	rank, avail, err := s.repo.GetQueueMetrics(s.ctx, "prod-metrics-3", "user-1")
+
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, rank)
+	require.Equal(s.T(), 0, avail)
+}
+
+// TestGetQueueMetrics_CorruptedStockData verifies that if the available units field
+// contains unparseable string data, it is safely treated as zero.
+func (s *CacheTestSuite) TestGetQueueMetrics_CorruptedStockData() {
+	err := s.repo.Enqueue(s.ctx, "prod-metrics-4", "user-1")
+	require.NoError(s.T(), err)
+
+	err = s.client.HSet(s.ctx, "stock:prod-metrics-4", "available_units", "NaN").Err()
+	require.NoError(s.T(), err)
+
+	rank, avail, err := s.repo.GetQueueMetrics(s.ctx, "prod-metrics-4", "user-1")
+
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, rank)
+	require.Equal(s.T(), 0, avail)
+}
+
+// TestGetQueueMetrics_InfrastructureError verifies that a network timeout or context
+// cancellation correctly interrupts the pipeline and propagates the failure upwards.
+func (s *CacheTestSuite) TestGetQueueMetrics_InfrastructureError() {
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	rank, avail, err := s.repo.GetQueueMetrics(ctx, "prod-metrics-5", "user-1")
+
+	require.Error(s.T(), err)
+	require.Equal(s.T(), 0, rank)
+	require.Equal(s.T(), 0, avail)
+}
