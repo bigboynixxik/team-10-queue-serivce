@@ -3,6 +3,7 @@ package transport
 
 import (
 	"context"
+	"time"
 
 	"backend/internal/models"
 )
@@ -37,5 +38,5 @@ type QueueService interface {
 
 	// CalculateETA computes the user's human-readable position in the queue (1-indexed)
 	// and the estimated wait time in seconds before they receive an offer or right.
-	CalculateETA(ctx context.Context, productID string, userID string) (position int, etaSeconds int, err error)
+	CalculateETA(ctx context.Context, productID string, userID string) (position int, etaSeconds time.Duration, err error)
 }
