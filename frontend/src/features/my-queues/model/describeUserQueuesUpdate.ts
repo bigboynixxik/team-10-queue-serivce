@@ -1,18 +1,27 @@
-import type { MembershipStatus, UserQueue } from '@entities/queue';
+import { isTerminalStatus, type MembershipStatus, type UserQueue } from '@entities/queue';
 
 const statusText: Record<MembershipStatus, string> = {
   QUEUED: 'вы в очереди',
-  RIGHT_ACTIVE: 'подошла ваша очередь',
-  OFFER_PENDING: 'доступно меньше товара',
+  RIGHT_ACTIVE: 'нужно оплатить товар',
+  OFFER_PENDING: 'доступно меньше товара, подтвердите количество',
   DECLINED: 'вы вышли из очереди',
   PURCHASED: 'покупка оформлена',
   SOLD_OUT: 'товар распродан',
 };
 
+const describeQueue = (queue: UserQueue): string =>
+  queue.status === 'QUEUED' && queue.position
+    ? `${statusText.QUEUED}, позиция ${queue.position}`
+    : statusText[queue.status];
+
 /**
  * Turns two consecutive SSE snapshots into one line of text. The stream sends
  * the whole list every time, so the previous snapshot is the only way to tell
  * what the user should actually be told about.
+ *
+ * Without a previous snapshot the list is the user's history rather than news,
+ * so finished queues stay silent — announcing a long sold out product as if it
+ * had just happened is what the user reads as a wrong message.
  */
 export const describeUserQueuesUpdate = (
   queues: UserQueue[],
@@ -23,15 +32,16 @@ export const describeUserQueuesUpdate = (
   const changes: string[] = [];
 
   for (const queue of queues) {
-    const title = getProductTitle(queue.product_id);
     const prev = before.get(queue.product_id);
 
     before.delete(queue.product_id);
 
+    if (!previous && isTerminalStatus(queue.status)) continue;
+
     if (!prev || prev.status !== queue.status) {
-      changes.push(`${title} — ${statusText[queue.status]}`);
+      changes.push(`${getProductTitle(queue.product_id)} — ${describeQueue(queue)}`);
     } else if (queue.position && prev.position !== queue.position) {
-      changes.push(`${title} — позиция ${queue.position}`);
+      changes.push(`${getProductTitle(queue.product_id)} — позиция ${queue.position}`);
     }
   }
 

@@ -1,11 +1,32 @@
 import { API_BASE_URL } from '@shared/config';
-import { useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 
-import { type UserQueue, UserQueuesSchema } from '../api/type';
-import { userQueuesQueryKey } from './queries';
+import { type Membership, type UserQueue, UserQueuesSchema } from '../api/type';
+import { queueMembershipQueryKey, userQueuesQueryKey } from './queries';
 
 const reconnectDelays = [1000, 2000, 5000, 10000];
+
+/**
+ * The snapshot is authoritative for every queue the user takes part in, so the
+ * per-product membership caches are refreshed from it too. Screens outside the
+ * queue page keep no socket of their own and would otherwise go on showing a
+ * membership the user has already been dropped from, e.g. after a sold out.
+ *
+ * The position is deliberately left out: it moves with every step of the queue
+ * and would re-render every card that only cares about the status.
+ */
+const syncMemberships = (queryClient: QueryClient, queues: UserQueue[]): void => {
+  for (const queue of queues) {
+    queryClient.setQueryData<Membership>(queueMembershipQueryKey(queue.product_id), {
+      status: queue.status,
+      token: queue.token,
+      quantity: queue.quantity,
+      available_quantity: queue.available_quantity,
+      expires_at: queue.expires_at,
+    });
+  }
+};
 
 const getUserQueuesSseUrl = (userId: string): string => {
   const apiUrl = new URL(API_BASE_URL || '/api/v1', window.location.origin);
@@ -18,7 +39,7 @@ const getUserQueuesSseUrl = (userId: string): string => {
 
 type Options = {
   /** Called with the fresh snapshot after every `update` event. */
-  onUpdate?: (queues: UserQueue[], previous?: UserQueue[]) => void;
+  onUpdate?: (queues: UserQueue[]) => void;
 };
 
 export const useUserQueuesLiveUpdates = (userId: string, { onUpdate }: Options = {}): void => {
@@ -57,11 +78,11 @@ export const useUserQueuesLiveUpdates = (userId: string, { onUpdate }: Options =
       nextSource.addEventListener('update', (event) => {
         try {
           const queues = UserQueuesSchema.parse(JSON.parse((event as MessageEvent<string>).data));
-          const previous = queryClient.getQueryData<UserQueue[]>(queryKey);
 
           reconnectAttempt = 0;
           queryClient.setQueryData(queryKey, queues);
-          onUpdateRef.current?.(queues, previous);
+          syncMemberships(queryClient, queues);
+          onUpdateRef.current?.(queues);
         } catch {
           queryClient.invalidateQueries({ queryKey });
         }
