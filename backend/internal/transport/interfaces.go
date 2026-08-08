@@ -26,6 +26,10 @@ type QueueService interface {
 	// and the queue is advanced.
 	DeclineOffer(ctx context.Context, productID, userID string) error
 
+	// LeaveQueue ends the user's participation, whether they are waiting,
+	// considering a partial offer, or hold an active purchase right.
+	LeaveQueue(ctx context.Context, productID, userID string) error
+
 	// ValidateRight checks if a given token is valid, active, and belongs to the requesting user.
 	ValidateRight(ctx context.Context, token, userID string) (*models.Right, error)
 
