@@ -47,6 +47,11 @@ func NewRouter(h *QueueHandler, log *slog.Logger, internalToken string) http.Han
 
 	mux.Handle(APIPrefix+"/queue/", mw.UserMiddleware(user))
 
+	// Public: head counts only, nothing tied to a person. Registered on the outer
+	// mux so it stays outside UserMiddleware — the more specific pattern wins over
+	// the /queue/ prefix above.
+	mux.HandleFunc("GET "+APIPrefix+"/queue/{product_id}/stats", h.queueStats)
+
 	mux.Handle("GET "+APIPrefix+"/rights/{token}",
 		mw.UserMiddleware(http.HandlerFunc(h.validateRight)))
 	mux.Handle("POST "+APIPrefix+"/rights/{token}/events",

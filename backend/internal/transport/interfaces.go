@@ -18,6 +18,10 @@ type QueueService interface {
 	// the polling read and every push of the realtime channel.
 	GetMembership(ctx context.Context, productID, userID string) (*models.QueueMembership, error)
 
+	// GetQueueStats reports public demand for a product: how many people wait,
+	// how many are mid-purchase, and how much stock is left.
+	GetQueueStats(ctx context.Context, productID string) (*models.QueueStats, error)
+
 	// AcceptOffer confirms a partial offer. The user can accept less than initially offered.
 	// Any unused quantity is automatically returned to the pool for the next in line.
 	AcceptOffer(ctx context.Context, productID, userID string, acceptedQuantity int) (*models.Right, error)

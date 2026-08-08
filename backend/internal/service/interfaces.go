@@ -28,6 +28,10 @@ type DurableRepo interface {
 
 	// SaveInitialStock persists the physical stock fetched from AvitoBackend.
 	SaveInitialStock(ctx context.Context, stock *models.ProductStock) error
+
+	// CountMembershipsByStatus reports how many users sit in each status for a
+	// product. Reporting read, not part of the allocation path.
+	CountMembershipsByStatus(ctx context.Context, productID string) (map[models.MembershipStatus]int, error)
 }
 
 // CacheRepo defines the contract for high-speed, concurrency-safe storage (Redis).
@@ -60,6 +64,9 @@ type CacheRepo interface {
 
 	// GetRight retrieves a cached right by its token.
 	GetRight(ctx context.Context, token string) (*models.Right, error)
+
+	// GetStock reads the cached stock counters of a product.
+	GetStock(ctx context.Context, productID string) (productCount, available int, err error)
 
 	// PublishEvent broadcasts a status change to connected WebSocket clients.
 	PublishEvent(ctx context.Context, productID string, userID string, payload interface{}) error

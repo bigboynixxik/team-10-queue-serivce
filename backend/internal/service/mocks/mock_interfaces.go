@@ -42,6 +42,21 @@ func (m *MockDurableRepo) EXPECT() *MockDurableRepoMockRecorder {
 	return m.recorder
 }
 
+// CountMembershipsByStatus mocks base method.
+func (m *MockDurableRepo) CountMembershipsByStatus(ctx context.Context, productID string) (map[models.MembershipStatus]int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountMembershipsByStatus", ctx, productID)
+	ret0, _ := ret[0].(map[models.MembershipStatus]int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountMembershipsByStatus indicates an expected call of CountMembershipsByStatus.
+func (mr *MockDurableRepoMockRecorder) CountMembershipsByStatus(ctx, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountMembershipsByStatus", reflect.TypeOf((*MockDurableRepo)(nil).CountMembershipsByStatus), ctx, productID)
+}
+
 // GetRightByToken mocks base method.
 func (m *MockDurableRepo) GetRightByToken(ctx context.Context, token string) (*models.Right, error) {
 	m.ctrl.T.Helper()
@@ -253,6 +268,22 @@ func (m *MockCacheRepo) GetRight(ctx context.Context, token string) (*models.Rig
 func (mr *MockCacheRepoMockRecorder) GetRight(ctx, token any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRight", reflect.TypeOf((*MockCacheRepo)(nil).GetRight), ctx, token)
+}
+
+// GetStock mocks base method.
+func (m *MockCacheRepo) GetStock(ctx context.Context, productID string) (int, int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetStock", ctx, productID)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetStock indicates an expected call of GetStock.
+func (mr *MockCacheRepoMockRecorder) GetStock(ctx, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStock", reflect.TypeOf((*MockCacheRepo)(nil).GetStock), ctx, productID)
 }
 
 // InitStock mocks base method.
