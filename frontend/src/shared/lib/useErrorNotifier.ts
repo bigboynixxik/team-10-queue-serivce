@@ -1,5 +1,5 @@
 import { getApiErrorMessages } from '@shared/api';
-import { App } from '@ui';
+import { useToast } from '@ui';
 
 export type ErrorNotifier = (error: unknown, fallback?: string) => void;
 
@@ -8,11 +8,11 @@ export type ErrorNotifier = (error: unknown, fallback?: string) => void;
  * feature reports failures the same way.
  */
 export const useErrorNotifier = (): ErrorNotifier => {
-  const { message } = App.useApp();
+  const toast = useToast();
 
   return (error, fallback) => {
     for (const text of getApiErrorMessages(error, fallback)) {
-      message.error(text);
+      toast.error(text);
     }
   };
 };

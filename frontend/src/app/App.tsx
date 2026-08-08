@@ -1,15 +1,14 @@
-import { RouterProvider } from 'react-router-dom';
-
-import { AntdProvider } from '@app/providers/AntdProvider';
 import { QueryProvider } from '@app/providers/QueryProvider';
 import { router } from '@app/router';
+import { ToastProvider } from '@ui';
+import { RouterProvider } from 'react-router-dom';
 
 export const App = (): React.JSX.Element => {
   return (
     <QueryProvider>
-      <AntdProvider>
+      <ToastProvider>
         <RouterProvider router={router} />
-      </AntdProvider>
+      </ToastProvider>
     </QueryProvider>
   );
 };

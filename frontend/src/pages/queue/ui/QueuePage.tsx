@@ -1,17 +1,22 @@
+import { cn } from '@shared/lib';
 import { Alert } from '@ui';
 import { QueueSession } from '@widgets/queue-session';
-import { useParams } from 'react-router-dom';
 
-export function QueuePage() {
-  const { productId } = useParams();
+import { useQueuePage } from '../model/useQueuePage';
+import styles from './QueuePage.module.css';
+
+const bem = cn('QueuePage');
+
+export const QueuePage = (): React.JSX.Element => {
+  const { productId } = useQueuePage();
 
   return (
-    <main className="queue-page">
+    <main className={styles[bem()]}>
       {productId ? (
         <QueueSession productId={productId} />
       ) : (
-        <Alert type="error" message="Товар не выбран" />
+        <Alert title="Товар не выбран" variant="error" />
       )}
     </main>
   );
-}
+};

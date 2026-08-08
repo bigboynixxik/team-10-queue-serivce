@@ -1,14 +1,17 @@
+import { useUserStore } from '@entities/user';
+import { cn } from '@shared/lib';
 import { Outlet } from 'react-router-dom';
 
-import { useUserStore } from '@entities/user';
-import { Layout } from '@ui';
+import styles from './AppLayout.module.css';
+
+const bem = cn('AppLayout');
 
 export const AppLayout = (): React.JSX.Element => {
   const userId = useUserStore.use.userId();
 
   return (
-    <Layout className="app-shell" data-user-id={userId}>
+    <div className={styles[bem()]} data-user-id={userId}>
       <Outlet />
-    </Layout>
+    </div>
   );
 };

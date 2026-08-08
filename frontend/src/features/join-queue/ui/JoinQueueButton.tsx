@@ -1,29 +1,26 @@
 import type { Product } from '@entities/product';
-import type { Nullable } from '@shared/model';
-import { Button, InputNumber, Space } from '@ui';
-import { useState } from 'react';
+import { Button, NumberInput, Stack } from '@ui';
 
-import { useJoinQueue } from '../model/useJoinQueue';
+import { useJoinQueueForm } from '../model/useJoinQueueForm';
 
 type Props = {
   product: Product;
 };
 
-export const JoinQueueButton = ({ product }: Props) => {
-  const [quantity, setQuantity] = useState(1);
-  const { join, isPending } = useJoinQueue(product);
+export const JoinQueueButton = ({ product }: Props): React.JSX.Element => {
+  const { quantity, setQuantity, submit, isPending } = useJoinQueueForm(product);
 
   return (
-    <Space.Compact block>
-      <InputNumber
+    <Stack block compact>
+      <NumberInput
         aria-label="Количество товара"
         min={1}
         value={quantity}
-        onChange={(value: Nullable<number>) => setQuantity(value ?? 1)}
+        onValueChange={setQuantity}
       />
-      <Button type="primary" loading={isPending} onClick={() => join(quantity)}>
+      <Button loading={isPending} onClick={submit} variant="primary">
         Встать в очередь
       </Button>
-    </Space.Compact>
+    </Stack>
   );
 };

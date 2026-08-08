@@ -1,0 +1,15 @@
+.QueuePage {
+  display: grid;
+  width: min(1120px, calc(100% - 32px));
+  min-height: 100vh;
+  place-items: center;
+  margin: 0 auto;
+  padding: 48px 0 72px;
+}
+
+@media (max-width: 760px) {
+  .QueuePage {
+    width: min(100% - 24px, 1120px);
+    padding-top: 24px;
+  }
+}

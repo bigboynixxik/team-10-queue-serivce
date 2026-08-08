@@ -1,32 +1,27 @@
-import type { Nullable } from '@shared/model';
-import { Button, InputNumber, Space } from '@ui';
-import { useState } from 'react';
+import { Button, NumberInput, Stack } from '@ui';
 
-import { useOfferActions } from '../model/useOfferActions';
+import { useOfferActionsForm } from '../model/useOfferActionsForm';
 
 type Props = {
   productId: string;
   availableQuantity: number;
 };
 
-export const OfferActions = ({ productId, availableQuantity }: Props) => {
-  const [quantity, setQuantity] = useState(availableQuantity);
-  const { accept, decline, isPending } = useOfferActions(productId);
+export const OfferActions = ({ productId, availableQuantity }: Props): React.JSX.Element => {
+  const { quantity, setQuantity, accept, decline, isPending } = useOfferActionsForm(
+    productId,
+    availableQuantity,
+  );
 
   return (
-    <Space wrap>
-      <InputNumber
-        min={1}
-        max={availableQuantity}
-        value={quantity}
-        onChange={(value: Nullable<number>) => setQuantity(value ?? 1)}
-      />
-      <Button type="primary" loading={isPending} onClick={() => accept({ quantity })}>
+    <Stack wrap>
+      <NumberInput min={1} max={availableQuantity} value={quantity} onValueChange={setQuantity} />
+      <Button loading={isPending} onClick={accept} variant="primary">
         Принять предложение
       </Button>
-      <Button danger loading={isPending} onClick={() => decline()}>
+      <Button loading={isPending} onClick={decline} variant="danger">
         Отказаться
       </Button>
-    </Space>
+    </Stack>
   );
 };
