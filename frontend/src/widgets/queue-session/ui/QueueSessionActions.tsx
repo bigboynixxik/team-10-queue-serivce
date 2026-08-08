@@ -17,7 +17,7 @@ const SoldOutActions = (): React.JSX.Element => {
 
   return (
     <>
-      <p>К сожалению товара больше нет, вы исключены из очереди</p>
+      <p>К сожалению товара закончился, попробуйте позже сделать заказ! Или вы можете вернуться к другим товарам</p>
       <Button onClick={() => navigate('/')} size="medium" variant="secondary">
         Вернуться к товарам
       </Button>

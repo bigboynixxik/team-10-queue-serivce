@@ -3,7 +3,8 @@
   width: min(1120px, calc(100% - 32px));
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: start;
-  gap: 56px;
+  column-gap: 56px;
+  row-gap: 24px;
   margin: 0 auto;
   padding: 120px 0 72px;
 }
@@ -23,6 +24,11 @@
   border-radius: 50px;
   aspect-ratio: 1;
   object-fit: cover;
+}
+
+.OrderInfoPage__back {
+  justify-self: start;
+  grid-column: 1 / -1;
 }
 
 .OrderInfoPage__summary {
@@ -56,7 +62,7 @@
     width: min(100% - 24px, 1120px);
     grid-template-columns: minmax(0, 1fr);
     gap: 24px;
-    padding-top: 24px;
+    padding-top: 96px;
   }
 
   .OrderInfoPage__title {

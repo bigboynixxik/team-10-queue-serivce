@@ -1,11 +1,13 @@
 .Header {
   position: absolute;
   top: 35px;
-  left: 48px;
-  right: 48px;
   display: flex;
+  width: min(1120px, calc(100% - 32px));
   align-items: center;
   justify-content: space-between;
+  margin-inline: auto;
+  left: 0;
+  right: 0;
 }
 
 .Header__logo {
@@ -17,8 +19,7 @@
 @media (max-width: 760px) {
   .Header {
     top: 16px;
-    left: 16px;
-    right: 16px;
+    width: min(1120px, calc(100% - 24px));
   }
 
   .Header__logo {

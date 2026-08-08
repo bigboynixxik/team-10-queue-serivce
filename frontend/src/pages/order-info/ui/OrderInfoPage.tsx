@@ -1,6 +1,7 @@
 import { cn } from '@shared/lib';
-import { Alert, Spinner } from '@ui';
+import { Alert, Button, Spinner } from '@ui';
 import { OrderQueueCta } from '@widgets/order-queue-cta';
+import { useNavigate } from 'react-router-dom';
 
 import { useOrderInfoPage } from '../model/useOrderInfoPage';
 import styles from './OrderInfoPage.module.css';
@@ -8,6 +9,7 @@ import styles from './OrderInfoPage.module.css';
 const bem = cn('OrderInfoPage');
 
 export const OrderInfoPage = (): React.JSX.Element => {
+  const navigate = useNavigate();
   const { product, isPending, isError } = useOrderInfoPage();
 
   if (isPending) {
@@ -28,6 +30,9 @@ export const OrderInfoPage = (): React.JSX.Element => {
 
   return (
     <main className={styles[bem()]}>
+      <Button className={styles[bem('back')]} onClick={() => navigate('/')}>
+        Назад
+      </Button>
       <img alt={product.title} className={styles[bem('image')]} src={product.image} />
       <section className={styles[bem('summary')]}>
         <h1 className={styles[bem('title')]}>{product.title}</h1>
