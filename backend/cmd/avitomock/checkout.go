@@ -39,6 +39,7 @@ var checkoutTemplate = template.Must(template.New("checkout").Parse(`<!doctype h
   </div>
 <script>
   const token = {{.Token}};
+  const returnUrl = {{.ReturnURL}};
   const button = document.getElementById('pay');
   const result = document.getElementById('result');
 
@@ -54,7 +55,8 @@ var checkoutTemplate = template.Must(template.New("checkout").Parse(`<!doctype h
       const body = await response.json();
       if (response.ok) {
         result.className = 'ok';
-        result.textContent = 'Оплачено. Заказ ' + body.order_id;
+        result.textContent = 'Оплачено. Возвращаем к товарам...';
+        window.setTimeout(() => window.location.assign(returnUrl), 800);
       } else {
         result.className = 'err';
         result.textContent = 'Не вышло: ' + (body.error || response.status);
