@@ -4,6 +4,11 @@
   padding: 14px 16px;
 }
 
+.Alert--dismissible {
+  position: relative;
+  padding-right: 48px;
+}
+
 .Alert--error {
   color: #991b1b;
   border-color: #fecaca;
@@ -28,4 +33,17 @@
 
 .Alert__description {
   margin: 4px 0 0;
+}
+
+.Alert__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 0;
+  padding: 4px 8px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
 }

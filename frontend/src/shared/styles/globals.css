@@ -18,3 +18,7 @@ button,
 input {
   font: inherit;
 }
+
+dl {
+  margin: 0;
+}

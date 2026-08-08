@@ -1,5 +1,8 @@
 .QueueSession {
   width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .QueueSession a {

@@ -9,9 +9,5 @@
 }
 
 .ToastProvider__item {
-  border-radius: 10px;
-  padding: 14px 16px;
-  color: #fff;
-  background: #b91c1c;
   box-shadow: 0 10px 24px rgb(15 23 42 / 20%);
 }

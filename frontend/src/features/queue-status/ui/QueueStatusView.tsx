@@ -1,6 +1,6 @@
 import type { Membership } from '@entities/queue';
-import type { Nullable } from '@shared/model';
-import { Alert, DescriptionList, Tag } from '@ui';
+import { useToast } from '@ui';
+import { useEffect, useRef } from 'react';
 
 const content = {
   QUEUED: ['Вы в очереди', 'Ожидайте, пока товар станет доступен.'],
@@ -13,29 +13,22 @@ const content = {
 
 type Props = {
   membership: Membership;
-  secondsLeft: Nullable<number>;
+  productTitle: string;
 };
 
-export const QueueStatusView = ({ membership, secondsLeft }: Props): React.JSX.Element => {
-  const [title, description] = content[membership.status];
-  const deadline = secondsLeft === null ? null : `${secondsLeft} сек.`;
-  const items = [
-    { label: 'Статус', value: <Tag variant="success">{membership.status}</Tag> },
-    ...(membership.quantity ? [{ label: 'Количество', value: `${membership.quantity} шт.` }] : []),
-    ...(membership.available_quantity
-      ? [{ label: 'Доступно', value: `${membership.available_quantity} шт.` }]
-      : []),
-    ...(deadline ? [{ label: 'Осталось', value: deadline }] : []),
-  ];
+export const QueueStatusView = ({ membership, productTitle }: Props): null => {
+  const { info, success } = useToast();
+  const lastNotifiedStatus = useRef<Membership['status'] | null>(null);
 
-  return (
-    <>
-      <Alert
-        description={description}
-        title={title}
-        variant={membership.status === 'PURCHASED' ? 'success' : 'info'}
-      />
-      <DescriptionList items={items} />
-    </>
-  );
+  useEffect(() => {
+    if (lastNotifiedStatus.current === membership.status) return;
+    lastNotifiedStatus.current = membership.status;
+
+    const [, description] = content[membership.status];
+    const notify = membership.status === 'PURCHASED' ? success : info;
+
+    notify({ title: productTitle, description });
+  }, [info, membership.status, productTitle, success]);
+
+  return null;
 };

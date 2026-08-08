@@ -19,5 +19,47 @@
     "description": "Отслеживают тренировки, сон и уведомления.",
     "price": 18990,
     "image": "https://images.unsplash.com/photo-1524805444758-089113d48a6d?auto=format&fit=crop&w=900&q=80"
+  },
+  {
+    "id": "macbook-air",
+    "title": "Ноутбук Apple MacBook Air 13 M4",
+    "description": "Лёгкий ноутбук для работы, учёбы и творчества.",
+    "price": 119990,
+    "image": "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=900&q=80"
+  },
+  {
+    "id": "mirrorless-camera",
+    "title": "Камера Sony Alpha 7 IV",
+    "description": "Полнокадровая камера для фото и видео.",
+    "price": 219990,
+    "image": "https://images.unsplash.com/photo-1516035069371-29a1b244cc32?auto=format&fit=crop&w=900&q=80"
+  },
+  {
+    "id": "electric-scooter",
+    "title": "Электросамокат Ninebot Max G2",
+    "description": "Надёжный городской самокат с большим запасом хода.",
+    "price": 74990,
+    "image": "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=900&q=80"
+  },
+  {
+    "id": "robot-vacuum",
+    "title": "Робот-пылесос Dreame L40 Ultra",
+    "description": "Влажная и сухая уборка с автоматическим обслуживанием.",
+    "price": 69990,
+    "image": "https://images.unsplash.com/photo-1585338447937-7082f8fc763d?auto=format&fit=crop&w=900&q=80"
+  },
+  {
+    "id": "coffee-machine",
+    "title": "Кофемашина DeLonghi Magnifica Evo",
+    "description": "Автоматическая кофемашина для любимых напитков.",
+    "price": 54990,
+    "image": "https://images.unsplash.com/photo-1517668808822-9ebb02f2a0e6?auto=format&fit=crop&w=900&q=80"
+  },
+  {
+    "id": "office-chair",
+    "title": "Кресло Ergohuman Elite 2",
+    "description": "Эргономичное кресло для комфортной работы за столом.",
+    "price": 64990,
+    "image": "https://images.unsplash.com/photo-1505843490701-5d8f2f2c1510?auto=format&fit=crop&w=900&q=80"
   }
 ]

@@ -2,14 +2,16 @@ import type { Membership } from '@entities/queue';
 import { OfferActions } from '@features/offer-actions';
 import { PaymentButton } from '@features/payment';
 import { assertNever } from '@shared/lib';
+import type { Nullable } from '@shared/model';
 import { Link } from 'react-router-dom';
 
 type Props = {
   productId: string;
   membership: Membership;
+  secondsLeft: Nullable<number>;
 };
 
-export const QueueSessionActions = ({ productId, membership }: Props) => {
+export const QueueSessionActions = ({ productId, membership, secondsLeft }: Props) => {
   switch (membership.status) {
     case 'QUEUED':
       return null;
@@ -18,7 +20,7 @@ export const QueueSessionActions = ({ productId, membership }: Props) => {
         <OfferActions productId={productId} availableQuantity={membership.available_quantity} />
       ) : null;
     case 'RIGHT_ACTIVE':
-      return <PaymentButton productId={productId} token={membership.token} />;
+      return <PaymentButton productId={productId} secondsLeft={secondsLeft} token={membership.token} />;
     case 'DECLINED':
     case 'PURCHASED':
     case 'SOLD_OUT':
