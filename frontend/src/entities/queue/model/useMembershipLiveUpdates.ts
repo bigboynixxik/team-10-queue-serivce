@@ -4,13 +4,9 @@ import { useEffect } from 'react';
 import { QueueWs } from '../api/QueueWs';
 import type { Membership } from '../api/type';
 import { queueMembershipQueryKey } from './queries';
+import { isTerminalStatus } from './status';
 
 const reconnectDelays = [1000, 2000, 5000, 10000];
-
-const isTerminalMembership = (membership?: Membership): boolean =>
-  membership?.status === 'DECLINED' ||
-  membership?.status === 'PURCHASED' ||
-  membership?.status === 'SOLD_OUT';
 
 /**
  * Pushes websocket updates straight into the React Query cache so the query
@@ -30,7 +26,7 @@ export const useMembershipLiveUpdates = (productId: string, userId: string): voi
     let socket: QueueWs | undefined;
 
     const shouldConnect = () =>
-      !disposed && !isTerminalMembership(queryClient.getQueryData<Membership>(queryKey));
+      !disposed && !isTerminalStatus(queryClient.getQueryData<Membership>(queryKey)?.status);
 
     const connect = () => {
       if (!shouldConnect()) return;

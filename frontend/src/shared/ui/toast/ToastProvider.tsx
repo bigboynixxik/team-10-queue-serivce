@@ -23,10 +23,14 @@ type ToastContent = {
   description: string;
 };
 
+type ToastOptions = {
+  duration?: number;
+};
+
 type ToastContextValue = {
   error: (message: string) => void;
-  info: (content: ToastContent) => void;
-  success: (content: ToastContent) => void;
+  info: (content: ToastContent, options?: ToastOptions) => void;
+  success: (content: ToastContent, options?: ToastOptions) => void;
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -85,8 +89,10 @@ export const ToastProvider = ({ children }: PropsWithChildren): React.JSX.Elemen
     () => ({
       error: (message: string) =>
         addToast({ title: 'Ошибка', description: message }, 'error', ERROR_TOAST_DURATION),
-      info: (content: ToastContent) => addToast(content, 'info', STATUS_TOAST_DURATION),
-      success: (content: ToastContent) => addToast(content, 'success', STATUS_TOAST_DURATION),
+      info: (content: ToastContent, options?: ToastOptions) =>
+        addToast(content, 'info', options?.duration ?? STATUS_TOAST_DURATION),
+      success: (content: ToastContent, options?: ToastOptions) =>
+        addToast(content, 'success', options?.duration ?? STATUS_TOAST_DURATION),
     }),
     [addToast],
   );

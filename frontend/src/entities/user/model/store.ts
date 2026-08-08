@@ -13,20 +13,20 @@ type Actions = BaseStoreActions & {
 
 type Store = State & Actions;
 
-const initialState: State = {
-  userId: '',
-};
-
 const initialUserId = createUserId();
+
+const initialState: State = {
+  userId: initialUserId,
+};
 
 const useUserStoreBase = create<Store>()((set) => ({
   ...initialState,
-  
+
   setUserId: (userId) => {
     localStorage.setItem(USER_ID_STORAGE_KEY, userId);
     set({ userId });
   },
-  
+
   reset: () => set({ userId: initialUserId }),
 }));
 

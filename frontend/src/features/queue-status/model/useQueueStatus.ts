@@ -1,4 +1,9 @@
-import { type Membership, queueQueries, useMembershipLiveUpdates } from '@entities/queue';
+import {
+  isTerminalStatus,
+  type Membership,
+  queueQueries,
+  useMembershipLiveUpdates,
+} from '@entities/queue';
 import { useUserStore } from '@entities/user';
 import type { Nullable } from '@shared/model';
 import { useQuery } from '@tanstack/react-query';
@@ -16,9 +21,6 @@ type QueueStatus = {
   isPending: boolean;
   isError: boolean;
 };
-
-const isTerminalStatus = (status?: Membership['status']): boolean =>
-  status === 'DECLINED' || status === 'PURCHASED' || status === 'SOLD_OUT';
 
 export const useQueueStatus = (productId: string): QueueStatus => {
   const userId = useUserStore.use.userId();

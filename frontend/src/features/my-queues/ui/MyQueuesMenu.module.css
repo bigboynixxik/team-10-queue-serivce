@@ -47,6 +47,12 @@
   gap: 4px;
 }
 
+.MyQueuesMenu__message {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+}
+
 .MyQueuesMenu__queue {
   width: 100%;
   border: 0;
