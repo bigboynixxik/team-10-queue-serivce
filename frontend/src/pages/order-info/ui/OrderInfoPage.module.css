@@ -1,0 +1,69 @@
+.OrderInfoPage {
+  display: grid;
+  width: min(1120px, calc(100% - 32px));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 56px;
+  margin: 0 auto;
+  padding: 120px 0 72px;
+}
+
+.OrderInfoPage__placeholder {
+  display: grid;
+  width: min(1120px, calc(100% - 32px));
+  min-height: 60vh;
+  place-items: center;
+  margin: 0 auto;
+  padding: 48px 0 72px;
+}
+
+.OrderInfoPage__image {
+  display: block;
+  width: 100%;
+  border-radius: 50px;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+.OrderInfoPage__summary {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  padding-top: 8px;
+}
+
+.OrderInfoPage__title {
+  margin: 0;
+  font-size: 40px;
+  line-height: 1.1;
+}
+
+.OrderInfoPage__price {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 800;
+}
+
+.OrderInfoPage__description {
+  margin: 0 0 8px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+@media (max-width: 760px) {
+  .OrderInfoPage {
+    width: min(100% - 24px, 1120px);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding-top: 24px;
+  }
+
+  .OrderInfoPage__title {
+    font-size: 28px;
+  }
+
+  .OrderInfoPage__image {
+    border-radius: 32px;
+  }
+}

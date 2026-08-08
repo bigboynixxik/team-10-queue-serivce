@@ -4,7 +4,7 @@ import { MyQueuesMenu } from '@features/my-queues';
 import avitoLogo from '@shared/assets/Avito.svg';
 import { cn } from '@shared/lib';
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { useMatch } from 'react-router-dom';
 
 import styles from './Header.module.css';
 
@@ -22,7 +22,7 @@ const QueueLeaveAction = ({ productId }: QueueLeaveActionProps): React.JSX.Eleme
 };
 
 export const Header = (): React.JSX.Element => {
-  const { productId } = useParams();
+  const productId = useMatch('/queue/:productId')?.params.productId;
 
   return (
     <header className={styles[bem()]}>

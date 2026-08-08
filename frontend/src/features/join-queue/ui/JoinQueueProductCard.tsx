@@ -3,8 +3,7 @@ import { queueQueries } from '@entities/queue';
 import { cn } from '@shared/lib';
 import { useQuery } from '@tanstack/react-query';
 import { Card } from '@ui';
-
-import { useJoinQueueForm } from '../model/useJoinQueueForm';
+import { useNavigate } from 'react-router-dom';
 
 import styles from './JoinQueueProductCard.module.css';
 
@@ -15,7 +14,7 @@ type Props = {
 };
 
 export const JoinQueueProductCard = ({ product }: Props): React.JSX.Element => {
-  const { submit } = useJoinQueueForm(product);
+  const navigate = useNavigate();
   const { data: membership } = useQuery(queueQueries.me(product.id));
   const isQueued = membership?.status === 'QUEUED';
 
@@ -23,7 +22,7 @@ export const JoinQueueProductCard = ({ product }: Props): React.JSX.Element => {
     <Card
       cover={<img alt={product.title} src={product.image} />}
       description={product.description}
-      onClick={isQueued ? undefined : submit}
+      onClick={() => navigate(`/order-info/${product.id}`)}
       title={product.title}
     >
       <p className={styles[bem('price')]}>{product.price.toLocaleString('ru-RU')} ₽</p>

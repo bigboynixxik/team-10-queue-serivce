@@ -15,6 +15,10 @@ const PaymentSuccessPage = lazy(() =>
   })),
 );
 
+const OrderInfoPage = lazy(() =>
+  import('@pages/order-info').then(({ OrderInfoPage }) => ({ default: OrderInfoPage })),
+);
+
 export const router = createBrowserRouter(
   [
     {
@@ -24,6 +28,10 @@ export const router = createBrowserRouter(
         {
           index: true,
           element: <HomePage />,
+        },
+        {
+          path: 'order-info/:productId',
+          element: <OrderInfoPage />,
         },
         {
           path: 'queue/:productId',

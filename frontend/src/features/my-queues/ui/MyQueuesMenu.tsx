@@ -72,7 +72,7 @@ export const MyQueuesMenu = (): React.JSX.Element => {
           <p className={styles[bem('title')]}>{`Мои очереди (${activeQueues.length})`}</p>
           <div className={styles[bem('list')]}>
             {isPending && <p className={styles[bem('message')]}>Загружаем очереди…</p>}
-            {isError && <p className={styles[bem('message')]}>Не удалось загрузить очереди.</p>}
+            {/* {isError && <p className={styles[bem('message')]}>Не удалось загрузить очереди.</p>} */}
             {!isPending && !isError && activeQueues.length === 0 && (
               <p className={styles[bem('message')]}>Вы пока не состоите ни в одной очереди.</p>
             )}
