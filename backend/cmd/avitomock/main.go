@@ -212,15 +212,10 @@ func (s *server) putStock(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) checkoutPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	returnURL := r.URL.Query().Get("return_url")
-	if returnURL == "" {
-		returnURL = "/avito"
-	}
 
 	if err := checkoutTemplate.Execute(w, map[string]string{
 		"Token":     r.URL.Query().Get("token"),
 		"ProductID": r.URL.Query().Get("product_id"),
-		"ReturnURL": returnURL,
 	}); err != nil {
 		slog.Error("render checkout", "error", err)
 	}

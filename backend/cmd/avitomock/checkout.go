@@ -39,9 +39,21 @@ var checkoutTemplate = template.Must(template.New("checkout").Parse(`<!doctype h
   </div>
 <script>
   const token = {{.Token}};
-  const returnUrl = {{.ReturnURL}};
   const button = document.getElementById('pay');
   const result = document.getElementById('result');
+
+  // The opener is the Queue Service tab. It is told about the payment only so it
+  // can refresh itself right away — the purchase itself travels to Queue Service
+  // through the backend event, not through the browser.
+  function notifyOpener() {
+    try {
+      if (!window.opener || window.opener.closed) return;
+      window.opener.postMessage({ source: 'avito-checkout', event: 'payment_succeeded', token }, '*');
+      window.opener.focus();
+    } catch (e) {
+      // Nothing to do: the queue tab still learns about the payment by polling.
+    }
+  }
 
   button.addEventListener('click', async () => {
     button.disabled = true;
@@ -55,8 +67,16 @@ var checkoutTemplate = template.Must(template.New("checkout").Parse(`<!doctype h
       const body = await response.json();
       if (response.ok) {
         result.className = 'ok';
-        result.textContent = 'Оплачено. Возвращаем к товарам...';
-        window.setTimeout(() => window.location.assign(returnUrl), 800);
+        result.textContent = 'Оплачено. Возвращаем на Авито...';
+        notifyOpener();
+        window.setTimeout(() => {
+          window.close();
+          // A tab the user opened by hand has no opener and cannot be closed by
+          // a script, so it needs an instruction instead of a blank promise.
+          window.setTimeout(() => {
+            result.textContent = 'Оплачено. Можно закрыть эту вкладку.';
+          }, 300);
+        }, 600);
       } else {
         result.className = 'err';
         result.textContent = 'Не вышло: ' + (body.error || response.status);
