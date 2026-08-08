@@ -83,3 +83,28 @@ func newRightResponse(r *models.Right) membershipResponse {
 		ExpiresAt: &expiresAt,
 	}
 }
+
+// statsResponse is the body of GET /api/v1/queue/{product_id}/stats. All fields
+// are always present — a zero is meaningful here, unlike in membershipResponse
+// where an absent field means "not applicable to this status".
+type statsResponse struct {
+	Waiting      int `json:"waiting"`
+	HoldingRight int `json:"holding_right"`
+	PendingOffer int `json:"pending_offer"`
+	Available    int `json:"available"`
+	ProductCount int `json:"product_count"`
+}
+
+func newStatsResponse(s *models.QueueStats) statsResponse {
+	if s == nil {
+		return statsResponse{}
+	}
+
+	return statsResponse{
+		Waiting:      s.Waiting,
+		HoldingRight: s.HoldingRight,
+		PendingOffer: s.PendingOffer,
+		Available:    s.Available,
+		ProductCount: s.ProductCount,
+	}
+}

@@ -192,3 +192,47 @@ func (dr *DurableRepo) SaveInitialStock(ctx context.Context, stock *models.Produ
 
 	return nil
 }
+
+// CountMembershipsByStatus returns how many users sit in each membership status
+// for a product.
+//
+// The counts come from Postgres rather than Redis because this is a reporting
+// read, not the hot path: scanning Redis for member:{pid}:* would mean a KEYS
+// sweep, while here the (product_id, user_id) index does the work.
+func (dr *DurableRepo) CountMembershipsByStatus(ctx context.Context, productID string) (map[models.MembershipStatus]int, error) {
+	query, args, err := dr.sq.Select("status", "count(*)").
+		From("queue_memberships").
+		Where(sq.Eq{"product_id": productID}).
+		GroupBy("status").
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.CountMembershipsByStatus query build: %w", err)
+	}
+
+	rows, err := dr.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.CountMembershipsByStatus execute: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[models.MembershipStatus]int)
+
+	for rows.Next() {
+		var (
+			status models.MembershipStatus
+			count  int
+		)
+
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.CountMembershipsByStatus scan: %w", err)
+		}
+
+		counts[status] = count
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.CountMembershipsByStatus rows: %w", err)
+	}
+
+	return counts, nil
+}

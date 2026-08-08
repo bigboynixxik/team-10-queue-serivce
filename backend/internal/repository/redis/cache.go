@@ -495,3 +495,23 @@ func (c *CacheRepo) GetQueueMetrics(ctx context.Context, productID string, userI
 	// rank is 0-indexed. The mathematical offset is handled in the service layer.
 	return int(rank), available, nil
 }
+
+// GetStock reads the cached stock counters of a product. It returns
+// models.ErrTokenNotFound when the product has never been touched — Queue
+// Service only learns about a product when someone first tries to buy it.
+func (c *CacheRepo) GetStock(ctx context.Context, productID string) (productCount, available int, err error) {
+	key := fmt.Sprintf("stock:%s", productID)
+
+	res, err := c.client.HGetAll(ctx, key).Result()
+	if err != nil {
+		return 0, 0, fmt.Errorf("redis.CacheRepo.GetStock execute: %w", err)
+	}
+	if len(res) == 0 {
+		return 0, 0, fmt.Errorf("redis.CacheRepo.GetStock not found: %w", models.ErrTokenNotFound)
+	}
+
+	productCount, _ = strconv.Atoi(res["product_count"])
+	available, _ = strconv.Atoi(res["available_units"])
+
+	return productCount, available, nil
+}
