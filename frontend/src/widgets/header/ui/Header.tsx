@@ -1,6 +1,7 @@
-import avitoLogo from '@shared/assets/Avito.svg';
 import { queueQueries } from '@entities/queue';
 import { LeaveQueueButton } from '@features/leave-queue';
+import { MyQueuesMenu } from '@features/my-queues';
+import avitoLogo from '@shared/assets/Avito.svg';
 import { cn } from '@shared/lib';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
@@ -26,7 +27,7 @@ export const Header = (): React.JSX.Element => {
   return (
     <header className={styles[bem()]}>
       <img alt="Авито" className={styles[bem('logo')]} src={avitoLogo} />
-      {productId && <QueueLeaveAction productId={productId} />}
+      {productId ? <QueueLeaveAction productId={productId} /> : <MyQueuesMenu />}
     </header>
   );
 };
