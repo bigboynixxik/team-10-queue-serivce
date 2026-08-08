@@ -1,0 +1,15 @@
+export {
+  Alert,
+  App,
+  Button,
+  Card,
+  ConfigProvider,
+  Descriptions,
+  InputNumber,
+  Layout,
+  Result,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+} from 'antd';
