@@ -271,7 +271,7 @@ paths:
                     available_quantity: 3
                     expires_at: "2026-08-03T12:20:00Z"
                 queued:
-                  summary: В очереди (в т.ч. после истечения таймера предыдущего права/предложения)
+                  summary: Ожидает выдачи права или предложения
                   value:
                     status: QUEUED
                 sold_out:

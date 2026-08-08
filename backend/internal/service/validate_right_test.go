@@ -40,6 +40,7 @@ func (s *QueueServiceTestSuite) TestValidateRight_Success_CacheMiss_DBHit() {
 
 	s.mockCache.EXPECT().GetRight(s.ctx, "valid-token").Return(nil, models.ErrTokenNotFound)
 	s.mockDurable.EXPECT().GetRightByToken(s.ctx, "valid-token").Return(validRight, nil)
+	s.mockCache.EXPECT().SetRight(s.ctx, validRight).Return(nil)
 
 	right, err := s.srv.ValidateRight(s.ctx, "valid-token", "user-1")
 
@@ -153,5 +154,20 @@ func (s *QueueServiceTestSuite) TestValidateRight_DBError() {
 	right, err := s.srv.ValidateRight(s.ctx, "db-error-token", "user-1")
 
 	require.ErrorIs(s.T(), err, expectedErr)
+	assert.Nil(s.T(), right)
+}
+func (s *QueueServiceTestSuite) TestValidateRight_ExpiredStatus() {
+	expiredRight := &models.Right{
+		Token:     "expired-status-token",
+		UserID:    "user-1",
+		Status:    models.RightStatusExpired,
+		ExpiresAt: time.Now().UTC().Add(5 * time.Minute),
+	}
+
+	s.mockCache.EXPECT().GetRight(s.ctx, "expired-status-token").Return(expiredRight, nil)
+
+	right, err := s.srv.ValidateRight(s.ctx, "expired-status-token", "user-1")
+
+	require.ErrorIs(s.T(), err, models.ErrTokenExpired)
 	assert.Nil(s.T(), right)
 }

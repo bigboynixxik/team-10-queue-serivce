@@ -4,6 +4,10 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -203,9 +207,9 @@ func (s *RepoTestSuite) TestSaveInitialStock() {
 	require.Equal(s.T(), 10, count)
 }
 
-// TestUpdateStockAndRightTx validates the atomic decrement of stock and status update of a right.
-func (s *RepoTestSuite) TestUpdateStockAndRightTx() {
-	now := time.Now().UTC()
+// TestUseRightTx validates the atomic decrement and complete USED state.
+func (s *RepoTestSuite) TestUseRightTx() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
 		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
@@ -217,14 +221,13 @@ func (s *RepoTestSuite) TestUpdateStockAndRightTx() {
 	})
 	require.NoError(s.T(), err)
 
-	err = s.repo.UpdateStockAndRightTx(s.ctx, "token-pay", "order-777", 2)
+	right, transitioned, err := s.repo.UseRightTx(s.ctx, "token-pay", "order-777", now)
 	require.NoError(s.T(), err)
-
-	right, err := s.repo.GetRightByToken(s.ctx, "token-pay")
-	require.NoError(s.T(), err)
+	require.True(s.T(), transitioned)
 	require.Equal(s.T(), models.RightStatusUsed, right.Status)
 	require.Equal(s.T(), "order-777", *right.OrderID)
 	require.NotNil(s.T(), right.UsedAt)
+	require.True(s.T(), now.Equal(*right.UsedAt))
 
 	var count int
 	err = s.pool.QueryRow(s.ctx, `SELECT product_count FROM product_stock WHERE product_id=$1`, "prod-1").Scan(&count)
@@ -232,8 +235,8 @@ func (s *RepoTestSuite) TestUpdateStockAndRightTx() {
 	require.Equal(s.T(), 3, count)
 }
 
-// TestUpdateStockAndRightTx_StockDepleted validates that a check constraint violation rolls back the transaction.
-func (s *RepoTestSuite) TestUpdateStockAndRightTx_StockDepleted() {
+// TestUseRightTx_StockDepleted verifies that both Right and stock roll back together.
+func (s *RepoTestSuite) TestUseRightTx_StockDepleted() {
 	now := time.Now().UTC()
 
 	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
@@ -246,18 +249,214 @@ func (s *RepoTestSuite) TestUpdateStockAndRightTx_StockDepleted() {
 	})
 	require.NoError(s.T(), err)
 
-	err = s.repo.UpdateStockAndRightTx(s.ctx, "token-fail", "order-888", 2)
+	_, transitioned, err := s.repo.UseRightTx(s.ctx, "token-fail", "order-888", now)
 	require.ErrorIs(s.T(), err, models.ErrStockDepleted)
+	require.False(s.T(), transitioned)
 
 	right, err := s.repo.GetRightByToken(s.ctx, "token-fail")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), models.RightStatusActive, right.Status)
 }
 
-// TestUpdateStockAndRightTx_TokenNotFound validates behavior when an unknown token is processed.
-func (s *RepoTestSuite) TestUpdateStockAndRightTx_TokenNotFound() {
-	err := s.repo.UpdateStockAndRightTx(s.ctx, "ghost-token", "order-999", 1)
+func (s *RepoTestSuite) TestUseRightTx_TokenNotFound() {
+	_, transitioned, err := s.repo.UseRightTx(s.ctx, "ghost-token", "order-999", time.Now().UTC())
 	require.ErrorIs(s.T(), err, models.ErrTokenNotFound)
+	require.False(s.T(), transitioned)
+}
+
+func (s *RepoTestSuite) TestUseRightTx_ExpiredRight() {
+	now := time.Now().UTC()
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "token-expired", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusExpired, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	})
+	require.NoError(s.T(), err)
+
+	_, transitioned, err := s.repo.UseRightTx(s.ctx, "token-expired", "order-1", now)
+	require.ErrorIs(s.T(), err, models.ErrTokenExpired)
+	require.False(s.T(), transitioned)
+}
+
+func (s *RepoTestSuite) TestUseRightTx_PastDeadline() {
+	now := time.Now().UTC()
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "token-late", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusActive, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(-time.Second),
+	})
+	require.NoError(s.T(), err)
+
+	_, transitioned, err := s.repo.UseRightTx(s.ctx, "token-late", "order-1", now)
+	require.ErrorIs(s.T(), err, models.ErrTokenExpired)
+	require.False(s.T(), transitioned)
+}
+
+func (s *RepoTestSuite) TestUseRightTx_ConcurrentWebhooksTransitionOnce() {
+	now := time.Now().UTC()
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "token-race", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	})
+	require.NoError(s.T(), err)
+
+	const workers = 20
+	var wg sync.WaitGroup
+	var transitionCount atomic.Int32
+	errCh := make(chan error, workers)
+	start := make(chan struct{})
+
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func(index int) {
+			defer wg.Done()
+			<-start
+
+			right, transitioned, useErr := s.repo.UseRightTx(s.ctx, "token-race", fmt.Sprintf("order-%d", index), now)
+			if useErr != nil {
+				errCh <- useErr
+				return
+			}
+			if right.Status != models.RightStatusUsed {
+				errCh <- fmt.Errorf("unexpected right status: %s", right.Status)
+				return
+			}
+			if transitioned {
+				transitionCount.Add(1)
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for workerErr := range errCh {
+		require.NoError(s.T(), workerErr)
+	}
+	require.Equal(s.T(), int32(1), transitionCount.Load())
+
+	var count int
+	err = s.pool.QueryRow(s.ctx, `SELECT product_count FROM product_stock WHERE product_id=$1`, "prod-1").Scan(&count)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 4, count)
+}
+
+func (s *RepoTestSuite) TestExpireRightAndUpsertMembershipTx() {
+	now := time.Now().UTC()
+	token := "token-expire"
+
+	err := s.repo.SaveRight(s.ctx, &models.Right{
+		Token: token, UserID: "u1", ProductID: "prod-1", Quantity: 2, Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.UpsertMembership(s.ctx, &models.QueueMembership{
+		ProductID: "prod-1", UserID: "u1", Status: models.MembershipStatusRightActive, Quantity: 2, CurrentToken: &token, ExpiresAt: ptr(now.Add(time.Minute)), CreatedAt: now, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+
+	finalMembership := &models.QueueMembership{
+		ProductID: "prod-1", UserID: "u1", Status: models.MembershipStatusDeclined, Quantity: 2, CreatedAt: now, UpdatedAt: now,
+	}
+	right, transitioned, err := s.repo.ExpireRightAndUpsertMembershipTx(s.ctx, token, finalMembership)
+	require.NoError(s.T(), err)
+	require.True(s.T(), transitioned)
+	require.Equal(s.T(), models.RightStatusExpired, right.Status)
+
+	var status models.MembershipStatus
+	var currentToken *string
+	err = s.pool.QueryRow(s.ctx, `SELECT status, current_token FROM queue_memberships WHERE product_id=$1 AND user_id=$2`, "prod-1", "u1").Scan(&status, &currentToken)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.MembershipStatusDeclined, status)
+	require.Nil(s.T(), currentToken)
+
+	right, transitioned, err = s.repo.ExpireRightAndUpsertMembershipTx(s.ctx, token, finalMembership)
+	require.NoError(s.T(), err)
+	require.False(s.T(), transitioned)
+	require.Equal(s.T(), models.RightStatusExpired, right.Status)
+}
+
+func (s *RepoTestSuite) TestRightTerminalTransitionsRace() {
+	now := time.Now().UTC()
+	token := "token-terminal-race"
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: token, UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.UpsertMembership(s.ctx, &models.QueueMembership{
+		ProductID: "prod-1", UserID: "u1", Status: models.MembershipStatusRightActive, Quantity: 1, CurrentToken: &token, ExpiresAt: ptr(now.Add(time.Minute)), CreatedAt: now, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+
+	finalMembership := &models.QueueMembership{
+		ProductID: "prod-1", UserID: "u1", Status: models.MembershipStatusDeclined, Quantity: 1, CreatedAt: now, UpdatedAt: now,
+	}
+
+	type transitionResult struct {
+		name         string
+		transitioned bool
+		err          error
+	}
+	results := make(chan transitionResult, 2)
+	start := make(chan struct{})
+
+	go func() {
+		<-start
+		_, transitioned, useErr := s.repo.UseRightTx(s.ctx, token, "order-race", now)
+		results <- transitionResult{name: "payment", transitioned: transitioned, err: useErr}
+	}()
+	go func() {
+		<-start
+		_, transitioned, expireErr := s.repo.ExpireRightAndUpsertMembershipTx(s.ctx, token, finalMembership)
+		results <- transitionResult{name: "expiration", transitioned: transitioned, err: expireErr}
+	}()
+
+	close(start)
+	first := <-results
+	second := <-results
+
+	transitionCount := 0
+	for _, result := range []transitionResult{first, second} {
+		if result.transitioned {
+			transitionCount++
+		}
+		if result.name == "payment" && errors.Is(result.err, models.ErrTokenExpired) {
+			continue
+		}
+		require.NoError(s.T(), result.err)
+	}
+	require.Equal(s.T(), 1, transitionCount)
+
+	right, err := s.repo.GetRightByToken(s.ctx, token)
+	require.NoError(s.T(), err)
+
+	var count int
+	err = s.pool.QueryRow(s.ctx, `SELECT product_count FROM product_stock WHERE product_id=$1`, "prod-1").Scan(&count)
+	require.NoError(s.T(), err)
+
+	switch right.Status {
+	case models.RightStatusUsed:
+		require.Equal(s.T(), 4, count)
+	case models.RightStatusExpired:
+		require.Equal(s.T(), 5, count)
+	default:
+		s.T().Fatalf("unexpected final right status: %s", right.Status)
+	}
 }
 
 // TestRepoTestSuite acts as the entry point for 'go test'.

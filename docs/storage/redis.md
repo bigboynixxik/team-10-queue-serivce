@@ -34,9 +34,8 @@ ZSET  queue:{pid}
 ```
 - Вход: `INCR queue:{pid}:seq` → `ZADD queue:{pid} <seq> <user_id>`.
 - Следующий в очереди: `ZRANGE queue:{pid} 0 0`.
-- Выход/отказ/requeue: `ZREM queue:{pid} <user_id>`. Requeue после истечения `RIGHT_ACTIVE`
-  (design_context.md, п.4) — это `ZREM` + новый `INCR`/`ZADD` с бо́льшим score, т.е. **в конец**,
-  не в начало (иначе бездействие одного пользователя блокирует остальных навсегда).
+- Выход/отказ: `ZREM queue:{pid} <user_id>`.
+- После истечения `RIGHT_ACTIVE` пользователь получает терминальный `DECLINED` и автоматически в ZSET не возвращается.
 
 Sorted Set, а не List — нужна точечная отмена элемента из середины (`ZREM`, O(log n)),
 чего List не даёт без сканирования всего списка.
@@ -143,10 +142,11 @@ end
 1. Каждый тик (например, `time.NewTicker(1 * time.Second)`) — `ZRANGEBYSCORE expiring:rights
    0 <now>`, где `<now>` — текущий unix ts.
 2. Для каждого просроченного `{pid}:{uid}` — выполнить бизнес-логику истечения:
-   - `right:{token}.status = EXPIRED` (и в Postgres — см. `postgres.md`);
-   - обновить `member:{pid}:{uid}` → `QUEUED`;
-   - requeue в конец `queue:{pid}` (§2.1);
-   - `PUBLISH updates:{pid}:{uid}` с новым статусом.
+   - атомарно перевести право в `EXPIRED` в Postgres и обновить durable membership;
+   - обновить `right:{token}.status = EXPIRED`;
+   - обновить `member:{pid}:{uid}` → `DECLINED`, очистив token и expires_at;
+   - вернуть резерв в available_units и продвинуть FIFO-очередь без requeue истёкшего пользователя;
+   - `PUBLISH updates:{pid}:{uid}` со статусом `DECLINED`.
 3. `ZREM expiring:rights {pid}:{uid}` — снять с таймера обработанный элемент, чтобы не
    обработать повторно на следующем тике.
 

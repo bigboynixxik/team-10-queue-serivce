@@ -115,18 +115,36 @@ func (mr *MockDurableRepoMockRecorder) SaveRight(ctx, right any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveRight", reflect.TypeOf((*MockDurableRepo)(nil).SaveRight), ctx, right)
 }
 
-// UpdateStockAndRightTx mocks base method.
-func (m *MockDurableRepo) UpdateStockAndRightTx(ctx context.Context, token, orderID string, quantity int) error {
+// ExpireRightAndUpsertMembershipTx mocks base method.
+func (m *MockDurableRepo) ExpireRightAndUpsertMembershipTx(ctx context.Context, token string, membership *models.QueueMembership) (*models.Right, bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateStockAndRightTx", ctx, token, orderID, quantity)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "ExpireRightAndUpsertMembershipTx", ctx, token, membership)
+	ret0, _ := ret[0].(*models.Right)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
-// UpdateStockAndRightTx indicates an expected call of UpdateStockAndRightTx.
-func (mr *MockDurableRepoMockRecorder) UpdateStockAndRightTx(ctx, token, orderID, quantity any) *gomock.Call {
+// ExpireRightAndUpsertMembershipTx indicates an expected call of ExpireRightAndUpsertMembershipTx.
+func (mr *MockDurableRepoMockRecorder) ExpireRightAndUpsertMembershipTx(ctx, token, membership any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateStockAndRightTx", reflect.TypeOf((*MockDurableRepo)(nil).UpdateStockAndRightTx), ctx, token, orderID, quantity)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpireRightAndUpsertMembershipTx", reflect.TypeOf((*MockDurableRepo)(nil).ExpireRightAndUpsertMembershipTx), ctx, token, membership)
+}
+
+// UseRightTx mocks base method.
+func (m *MockDurableRepo) UseRightTx(ctx context.Context, token, orderID string, now time.Time) (*models.Right, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UseRightTx", ctx, token, orderID, now)
+	ret0, _ := ret[0].(*models.Right)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// UseRightTx indicates an expected call of UseRightTx.
+func (mr *MockDurableRepoMockRecorder) UseRightTx(ctx, token, orderID, now any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UseRightTx", reflect.TypeOf((*MockDurableRepo)(nil).UseRightTx), ctx, token, orderID, now)
 }
 
 // UpsertMembership mocks base method.
