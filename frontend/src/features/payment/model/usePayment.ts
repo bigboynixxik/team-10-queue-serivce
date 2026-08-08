@@ -8,7 +8,10 @@ const buildCheckoutUrl = (productId: string, token: string): string => {
 
   checkoutUrl.searchParams.set('token', token);
   checkoutUrl.searchParams.set('product_id', productId);
-  checkoutUrl.searchParams.set('return_url', `${window.location.origin}${APP_BASENAME}`);
+  checkoutUrl.searchParams.set(
+    'return_url',
+    `${window.location.origin}${APP_BASENAME}/payment-success`,
+  );
 
   return checkoutUrl.toString();
 };

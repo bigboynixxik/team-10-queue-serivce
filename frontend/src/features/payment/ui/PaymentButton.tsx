@@ -30,7 +30,7 @@ export const PaymentButton = ({
       {secondsLeft !== null && (
         <span className={styles.PaymentButton__timer}>{formatTimeLeft(secondsLeft)}</span>
       )}
-      <Button loading={isPending} onClick={pay} size="medium" variant="primary">
+      <Button loading={isPending} onClick={pay} size="medium" variant="secondary">
         Перейти к оплате
       </Button>
     </div>
