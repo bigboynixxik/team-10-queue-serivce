@@ -17,11 +17,15 @@ type QueueStatus = {
   isError: boolean;
 };
 
+const isTerminalStatus = (status?: Membership['status']): boolean =>
+  status === 'DECLINED' || status === 'PURCHASED' || status === 'SOLD_OUT';
+
 export const useQueueStatus = (productId: string): QueueStatus => {
   const userId = useUserStore.use.userId();
   const { data, isPending, isError } = useQuery({
     ...queueQueries.me(productId),
     enabled: Boolean(productId),
+    refetchInterval: (query) => (isTerminalStatus(query.state.data?.status) ? false : 2000),
   });
   const membership = data ?? null;
   const expiresAt = membership?.expires_at;
