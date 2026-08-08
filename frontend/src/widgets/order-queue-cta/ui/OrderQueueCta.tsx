@@ -6,6 +6,7 @@ import { LeaveQueueButton } from '@features/leave-queue';
 import { OfferActions } from '@features/offer-actions';
 import { useCheckoutResult, usePayment } from '@features/payment';
 import { useQueueStatus } from '@features/queue-status';
+import { appPath } from '@shared/config';
 import { cn } from '@shared/lib';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, QuantityStepper } from '@ui';
@@ -51,7 +52,7 @@ export const OrderQueueCta = ({ product }: Props): React.JSX.Element => {
       previousStatus.current !== undefined &&
       previousStatus.current !== 'PURCHASED'
     ) {
-      navigate('/payment-success');
+      navigate(appPath('/payment-success'));
     }
 
     previousStatus.current = membership?.status;
@@ -74,7 +75,7 @@ export const OrderQueueCta = ({ product }: Props): React.JSX.Element => {
   const action: CtaAction = (() => {
     if (isPayable) return { label: 'Оплатить товар', run: pay };
     if (isQueued) return { label: 'Вы в очереди', run: () => {}, disabled: true };
-    if (isSoldOut) return { label: 'Вернуться к товарам', run: () => navigate('/') };
+    if (isSoldOut) return { label: 'Вернуться к товарам', run: () => navigate(appPath()) };
 
     return { label: 'Перейти в очередь', run: submit };
   })();

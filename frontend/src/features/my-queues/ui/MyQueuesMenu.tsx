@@ -1,6 +1,7 @@
 import { productQueries } from '@entities/product';
 import { isTerminalStatus, queueQueries } from '@entities/queue';
 import { useUserStore } from '@entities/user';
+import { appPath } from '@shared/config';
 import { cn } from '@shared/lib';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@ui';
@@ -48,7 +49,7 @@ export const MyQueuesMenu = (): React.JSX.Element => {
 
   const openQueue = (productId: string) => {
     setIsOpen(false);
-    navigate(`/order-info/${productId}`);
+    navigate(appPath(`/order-info/${productId}`));
   };
 
   return (

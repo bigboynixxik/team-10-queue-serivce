@@ -1,3 +1,4 @@
+import { appPath } from '@shared/config';
 import { cn } from '@shared/lib';
 import { Alert, Button, Spinner } from '@ui';
 import { OrderQueueCta } from '@widgets/order-queue-cta';
@@ -30,7 +31,7 @@ export const OrderInfoPage = (): React.JSX.Element => {
 
   return (
     <main className={styles[bem()]}>
-      <Button className={styles[bem('back')]} onClick={() => navigate('/')}>
+      <Button className={styles[bem('back')]} onClick={() => navigate(appPath())}>
         Назад
       </Button>
       <img alt={product.title} className={styles[bem('image')]} src={product.image} />

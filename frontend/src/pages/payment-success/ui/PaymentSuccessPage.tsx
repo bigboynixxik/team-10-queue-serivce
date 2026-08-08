@@ -1,3 +1,4 @@
+import { appPath } from '@shared/config';
 import { cn } from '@shared/lib';
 import { Link } from 'react-router-dom';
 
@@ -15,7 +16,7 @@ export const PaymentSuccessPage = (): React.JSX.Element => (
         Оплата прошла успешно
       </h1>
       <p className={styles[bem('description')]}>Заказ оформлен. Спасибо за покупку!</p>
-      <Link className={styles[bem('link')]} to="/">
+      <Link className={styles[bem('link')]} to={appPath()}>
         Ко всем товарам
       </Link>
     </section>
