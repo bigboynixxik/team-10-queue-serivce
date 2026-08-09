@@ -43,6 +43,9 @@ type QueueService interface {
 	// ValidateRight checks if a given token is valid, active, and belongs to the requesting user.
 	ValidateRight(ctx context.Context, token, userID string) (*models.Right, error)
 
+	// ValidateRightForCheckout checks if AvitoBackend may create an order for this token and product.
+	ValidateRightForCheckout(ctx context.Context, token, productID string) (*models.Right, error)
+
 	// ProcessPayment confirms a successful purchase, durably updating stock and invalidating the token.
 	ProcessPayment(ctx context.Context, token, orderID string) error
 

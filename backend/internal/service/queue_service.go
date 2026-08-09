@@ -700,10 +700,7 @@ func (s *QueueService) rollbackAdvance(
 	return errors.Join(rollbackErrors...)
 }
 
-// ValidateRight validates a purchase right before allowing the user to proceed to checkout.
-// It strictly checks ownership, expiration, and status to prevent fraud, and uses a database
-// fallback in case of a cache miss.
-func (s *QueueService) ValidateRight(ctx context.Context, token string, userID string) (*models.Right, error) {
+func (s *QueueService) getActiveRight(ctx context.Context, token string) (*models.Right, error) {
 	log := logger.FromContext(ctx)
 
 	right, err := s.cache.GetRight(ctx, token)
@@ -716,11 +713,7 @@ func (s *QueueService) ValidateRight(ctx context.Context, token string, userID s
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("service.ValidateRight fetch: %w", err)
-	}
-
-	if right.UserID != userID {
-		return nil, models.ErrForbidden
+		return nil, fmt.Errorf("service.getActiveRight fetch: %w", err)
 	}
 
 	switch right.Status {
@@ -736,6 +729,38 @@ func (s *QueueService) ValidateRight(ctx context.Context, token string, userID s
 
 	if !time.Now().UTC().Before(right.ExpiresAt) {
 		return nil, models.ErrTokenExpired
+	}
+
+	return right, nil
+}
+
+// ValidateRight validates a purchase right before allowing the user to proceed to checkout.
+// It strictly checks ownership, expiration, and status to prevent fraud, and uses a database
+// fallback in case of a cache miss.
+func (s *QueueService) ValidateRight(ctx context.Context, token string, userID string) (*models.Right, error) {
+	right, err := s.getActiveRight(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	if right.UserID != userID {
+		return nil, models.ErrForbidden
+	}
+
+	return right, nil
+}
+
+// ValidateRightForCheckout validates the token from AvitoBackend before it
+// creates an order. At this point the caller is a trusted service, so the product
+// binding is the critical anti-bypass check.
+func (s *QueueService) ValidateRightForCheckout(ctx context.Context, token string, productID string) (*models.Right, error) {
+	right, err := s.getActiveRight(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	if right.ProductID != productID {
+		return nil, models.ErrForbidden
 	}
 
 	return right, nil

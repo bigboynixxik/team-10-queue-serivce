@@ -23,6 +23,27 @@ func (h *QueueHandler) validateRight(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, validationResponse{Valid: true})
 }
 
+// validateRightForCheckout handles AvitoBackend's private pre-payment check.
+// A browser can still open /checkout, but AvitoBackend refuses to create an
+// order unless Queue Service says this token is active and bound to the product.
+func (h *QueueHandler) validateRightForCheckout(w http.ResponseWriter, r *http.Request) {
+	var req checkoutValidationRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.ProductID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if _, err := h.service.ValidateRightForCheckout(r.Context(), r.PathValue("token"), req.ProductID); err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // rightEvents handles POST /rights/{token}/events, called by AvitoBackend.
 // It reports an event rather than setting a status: AvitoBackend knows nothing
 // about our internal state model.

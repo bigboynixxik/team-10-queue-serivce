@@ -20,12 +20,16 @@ import (
 )
 
 type realtimeQueueServiceStub struct {
-	mu             sync.Mutex
-	membership     models.QueueMembership
-	position       int
-	eta            time.Duration
-	userQueueCalls int
-	heartbeatCalls int
+	mu              sync.Mutex
+	membership      models.QueueMembership
+	position        int
+	eta             time.Duration
+	userQueueCalls  int
+	heartbeatCalls  int
+	checkoutCalls   int
+	checkoutToken   string
+	checkoutProduct string
+	checkoutErr     error
 }
 
 func (s *realtimeQueueServiceStub) JoinQueue(
@@ -106,6 +110,25 @@ func (s *realtimeQueueServiceStub) ValidateRight(
 	return nil, nil
 }
 
+func (s *realtimeQueueServiceStub) ValidateRightForCheckout(
+	_ context.Context,
+	token string,
+	productID string,
+) (*models.Right, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.checkoutCalls++
+	s.checkoutToken = token
+	s.checkoutProduct = productID
+
+	if s.checkoutErr != nil {
+		return nil, s.checkoutErr
+	}
+
+	return &models.Right{Token: token, ProductID: productID}, nil
+}
+
 func (s *realtimeQueueServiceStub) ProcessPayment(context.Context, string, string) error {
 	return nil
 }
@@ -138,6 +161,13 @@ func (s *realtimeQueueServiceStub) heartbeatCallCount() int {
 	defer s.mu.Unlock()
 
 	return s.heartbeatCalls
+}
+
+func (s *realtimeQueueServiceStub) checkoutCall() (int, string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.checkoutCalls, s.checkoutToken, s.checkoutProduct
 }
 
 func (s *realtimeQueueServiceStub) setQueueMetrics(position int, eta time.Duration) {
