@@ -12,6 +12,7 @@ import (
 	"backend/pkg/logger"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -113,8 +114,9 @@ func (dr *DurableRepo) UpsertMembership(ctx context.Context, membership *models.
 }
 
 // UseRightTx atomically transitions an ACTIVE right to USED, decrements
-// product_stock, and finalizes the matching membership if it still owns the
-// same token. The row lock makes duplicate payment webhooks idempotent.
+// product_stock, writes a stock decrement outbox event, and finalizes the
+// matching membership if it still owns the same token. The row lock makes
+// duplicate payment webhooks idempotent.
 func (dr *DurableRepo) UseRightTx(
 	ctx context.Context,
 	token string,
@@ -197,6 +199,18 @@ func (dr *DurableRepo) UseRightTx(
 		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx stock depleted: %w", models.ErrStockDepleted)
 	}
 
+	queryOutbox, argsOutbox, err := dr.sq.Insert("stock_decrement_outbox").
+		Columns("id", "right_token", "order_id", "product_id", "quantity", "next_attempt_at", "created_at", "updated_at").
+		Values(uuid.NewString(), right.Token, orderID, right.ProductID, right.Quantity, now, now, now).
+		ToSql()
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx outbox query build: %w", err)
+	}
+
+	if _, err = tx.Exec(ctx, queryOutbox, argsOutbox...); err != nil {
+		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx outbox execute: %w", err)
+	}
+
 	queryMembership, argsMembership, err := dr.sq.Update("queue_memberships").
 		Set("status", models.MembershipStatusPurchased).
 		Set("available_quantity", nil).
@@ -228,6 +242,128 @@ func (dr *DurableRepo) UseRightTx(
 	right.UsedAt = &now
 
 	return right, true, nil
+}
+
+// ClaimStockDecrements leases due stock decrement events for delivery. Multiple
+// API instances can run this safely because SKIP LOCKED gives each row to one
+// worker at a time, and an expired lease can be claimed again later.
+func (dr *DurableRepo) ClaimStockDecrements(
+	ctx context.Context,
+	now time.Time,
+	leaseUntil time.Time,
+	limit int,
+) ([]models.StockDecrement, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	query, args, err := dr.sq.Update("stock_decrement_outbox").
+		Set("locked_until", leaseUntil).
+		Set("attempts", sq.Expr("attempts + 1")).
+		Set("updated_at", now).
+		Where(`
+			id IN (
+				SELECT id
+				FROM stock_decrement_outbox
+				WHERE delivered_at IS NULL
+					AND next_attempt_at <= ?
+					AND (locked_until IS NULL OR locked_until <= ?)
+				ORDER BY next_attempt_at, created_at
+				FOR UPDATE SKIP LOCKED
+				LIMIT ?
+			)
+		`, now, now, limit).
+		Suffix(`
+			RETURNING id::text, right_token, order_id, product_id, quantity, attempts,
+				next_attempt_at, locked_until, delivered_at, last_error, created_at, updated_at
+		`).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.ClaimStockDecrements query build: %w", err)
+	}
+
+	rows, err := dr.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.ClaimStockDecrements execute: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]models.StockDecrement, 0)
+	for rows.Next() {
+		event := models.StockDecrement{}
+		if err := rows.Scan(
+			&event.ID,
+			&event.RightToken,
+			&event.OrderID,
+			&event.ProductID,
+			&event.Quantity,
+			&event.Attempts,
+			&event.NextAttemptAt,
+			&event.LockedUntil,
+			&event.DeliveredAt,
+			&event.LastError,
+			&event.CreatedAt,
+			&event.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.ClaimStockDecrements scan: %w", err)
+		}
+
+		events = append(events, event)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.ClaimStockDecrements rows: %w", err)
+	}
+
+	return events, nil
+}
+
+// MarkStockDecrementDelivered acknowledges a delivered event.
+func (dr *DurableRepo) MarkStockDecrementDelivered(ctx context.Context, eventID string, now time.Time) error {
+	query, args, err := dr.sq.Update("stock_decrement_outbox").
+		Set("delivered_at", now).
+		Set("locked_until", nil).
+		Set("last_error", nil).
+		Set("updated_at", now).
+		Where(sq.Eq{"id": eventID}).
+		Where(sq.Eq{"delivered_at": nil}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.MarkStockDecrementDelivered query build: %w", err)
+	}
+
+	if _, err := dr.pool.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.MarkStockDecrementDelivered execute: %w", err)
+	}
+
+	return nil
+}
+
+// RescheduleStockDecrement releases a failed event for a later retry.
+func (dr *DurableRepo) RescheduleStockDecrement(
+	ctx context.Context,
+	eventID string,
+	nextAttemptAt time.Time,
+	lastError string,
+	now time.Time,
+) error {
+	query, args, err := dr.sq.Update("stock_decrement_outbox").
+		Set("next_attempt_at", nextAttemptAt).
+		Set("locked_until", nil).
+		Set("last_error", lastError).
+		Set("updated_at", now).
+		Where(sq.Eq{"id": eventID}).
+		Where(sq.Eq{"delivered_at": nil}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.RescheduleStockDecrement query build: %w", err)
+	}
+
+	if _, err := dr.pool.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.RescheduleStockDecrement execute: %w", err)
+	}
+
+	return nil
 }
 
 // ExpireRightAndUpsertMembershipTx atomically invalidates an unpaid right and

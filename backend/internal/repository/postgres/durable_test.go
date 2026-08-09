@@ -81,7 +81,7 @@ func (s *RepoTestSuite) TearDownSuite() {
 
 // SetupTest truncates all tables before each test to ensure isolation.
 func (s *RepoTestSuite) SetupTest() {
-	_, err := s.pool.Exec(s.ctx, `TRUNCATE rights, queue_memberships, product_stock CASCADE;`)
+	_, err := s.pool.Exec(s.ctx, `TRUNCATE stock_decrement_outbox, rights, queue_memberships, product_stock CASCADE;`)
 	require.NoError(s.T(), err)
 }
 
@@ -259,6 +259,15 @@ func (s *RepoTestSuite) TestUseRightTx() {
 	require.True(s.T(), currentTokenIsNull)
 	require.True(s.T(), expiresAtIsNull)
 	require.True(s.T(), availableQuantityIsNull)
+
+	var outboxCount int
+	err = s.pool.QueryRow(s.ctx, `
+		SELECT count(*)
+		FROM stock_decrement_outbox
+		WHERE right_token=$1 AND order_id=$2 AND product_id=$3 AND quantity=$4
+	`, "token-pay", "order-777", "prod-1", 2).Scan(&outboxCount)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, outboxCount)
 }
 
 func (s *RepoTestSuite) TestUseRightTx_UsedRightRejectsDifferentOrder() {
@@ -280,6 +289,11 @@ func (s *RepoTestSuite) TestUseRightTx_UsedRightRejectsDifferentOrder() {
 	_, transitioned, err = s.repo.UseRightTx(s.ctx, "token-order", "order-2", now)
 	require.ErrorIs(s.T(), err, models.ErrTokenUsed)
 	require.False(s.T(), transitioned)
+
+	var outboxCount int
+	err = s.pool.QueryRow(s.ctx, `SELECT count(*) FROM stock_decrement_outbox WHERE right_token=$1`, "token-order").Scan(&outboxCount)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, outboxCount)
 }
 
 func (s *RepoTestSuite) TestUseRightTx_DoesNotOverwriteNewMembershipToken() {
@@ -439,6 +453,64 @@ func (s *RepoTestSuite) TestUseRightTx_ConcurrentWebhooksTransitionOnce() {
 	err = s.pool.QueryRow(s.ctx, `SELECT product_count FROM product_stock WHERE product_id=$1`, "prod-1").Scan(&count)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 4, count)
+
+	var outboxCount int
+	err = s.pool.QueryRow(s.ctx, `SELECT count(*) FROM stock_decrement_outbox WHERE right_token=$1`, "token-race").Scan(&outboxCount)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, outboxCount)
+}
+
+func (s *RepoTestSuite) TestStockDecrementOutboxClaimAndAck() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(s.T(), s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "token-outbox", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusUsed, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	}))
+
+	_, err := s.pool.Exec(s.ctx, `
+		INSERT INTO stock_decrement_outbox
+			(id, right_token, order_id, product_id, quantity, next_attempt_at, created_at, updated_at)
+		VALUES
+			('00000000-0000-0000-0000-000000000001', 'token-outbox', 'order-outbox', 'prod-1', 1, $1, $1, $1)
+	`, now.Add(-time.Second))
+	require.NoError(s.T(), err)
+
+	leaseUntil := now.Add(30 * time.Second)
+	events, err := s.repo.ClaimStockDecrements(s.ctx, now, leaseUntil, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), events, 1)
+	require.Equal(s.T(), "00000000-0000-0000-0000-000000000001", events[0].ID)
+	require.Equal(s.T(), 1, events[0].Attempts)
+	require.NotNil(s.T(), events[0].LockedUntil)
+
+	events, err = s.repo.ClaimStockDecrements(s.ctx, now, leaseUntil.Add(time.Minute), 10)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), events)
+
+	require.NoError(s.T(), s.repo.MarkStockDecrementDelivered(s.ctx, "00000000-0000-0000-0000-000000000001", now))
+
+	events, err = s.repo.ClaimStockDecrements(s.ctx, leaseUntil.Add(time.Minute), leaseUntil.Add(2*time.Minute), 10)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), events)
+}
+
+func (s *RepoTestSuite) TestStockDecrementOutboxExpiredLeaseIsReclaimed() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(s.T(), s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "token-reclaim", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusUsed, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	}))
+
+	_, err := s.pool.Exec(s.ctx, `
+		INSERT INTO stock_decrement_outbox
+			(id, right_token, order_id, product_id, quantity, attempts, next_attempt_at, locked_until, created_at, updated_at)
+		VALUES
+			('00000000-0000-0000-0000-000000000002', 'token-reclaim', 'order-reclaim', 'prod-1', 1, 2, $1, $2, $1, $1)
+	`, now.Add(-time.Minute), now.Add(-time.Second))
+	require.NoError(s.T(), err)
+
+	events, err := s.repo.ClaimStockDecrements(s.ctx, now, now.Add(30*time.Second), 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), events, 1)
+	require.Equal(s.T(), 3, events[0].Attempts)
 }
 
 func (s *RepoTestSuite) TestExpireRightAndUpsertMembershipTx() {

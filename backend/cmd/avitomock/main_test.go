@@ -118,3 +118,53 @@ func TestPayDoesNotReportPaymentWhenValidationFails(t *testing.T) {
 	defer mu.Unlock()
 	require.False(t, eventCalled)
 }
+
+func TestPatchStockRequiresIdempotencyKey(t *testing.T) {
+	srv := &server{stock: newStock(3)}
+	req := httptest.NewRequest(http.MethodPatch, "/products/prod-1/stock", bytes.NewBufferString(`{"decrement":1}`))
+	rec := httptest.NewRecorder()
+
+	srv.patchStock(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestPatchStockIdempotencyReplaysWithoutSecondDecrement(t *testing.T) {
+	srv := &server{stock: newStock(3)}
+
+	first := httptest.NewRequest(http.MethodPatch, "/products/prod-1/stock", bytes.NewBufferString(`{"decrement":1}`))
+	first.SetPathValue("product_id", "prod-1")
+	first.Header.Set(idempotencyKeyHeader, "event-1")
+	firstRec := httptest.NewRecorder()
+	srv.patchStock(firstRec, first)
+
+	second := httptest.NewRequest(http.MethodPatch, "/products/prod-1/stock", bytes.NewBufferString(`{"decrement":1}`))
+	second.SetPathValue("product_id", "prod-1")
+	second.Header.Set(idempotencyKeyHeader, "event-1")
+	secondRec := httptest.NewRecorder()
+	srv.patchStock(secondRec, second)
+
+	require.Equal(t, http.StatusOK, firstRec.Code)
+	require.Equal(t, http.StatusOK, secondRec.Code)
+	require.Equal(t, 2, srv.stock.get("prod-1"))
+}
+
+func TestPatchStockIdempotencyRejectsConflictingPayload(t *testing.T) {
+	srv := &server{stock: newStock(3)}
+
+	first := httptest.NewRequest(http.MethodPatch, "/products/prod-1/stock", bytes.NewBufferString(`{"decrement":1}`))
+	first.SetPathValue("product_id", "prod-1")
+	first.Header.Set(idempotencyKeyHeader, "event-1")
+	firstRec := httptest.NewRecorder()
+	srv.patchStock(firstRec, first)
+
+	second := httptest.NewRequest(http.MethodPatch, "/products/prod-1/stock", bytes.NewBufferString(`{"decrement":2}`))
+	second.SetPathValue("product_id", "prod-1")
+	second.Header.Set(idempotencyKeyHeader, "event-1")
+	secondRec := httptest.NewRecorder()
+	srv.patchStock(secondRec, second)
+
+	require.Equal(t, http.StatusOK, firstRec.Code)
+	require.Equal(t, http.StatusConflict, secondRec.Code)
+	require.Equal(t, 2, srv.stock.get("prod-1"))
+}

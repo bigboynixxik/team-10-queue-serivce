@@ -57,6 +57,21 @@ func (mr *MockDurableRepoMockRecorder) CountMembershipsByStatus(ctx, productID a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountMembershipsByStatus", reflect.TypeOf((*MockDurableRepo)(nil).CountMembershipsByStatus), ctx, productID)
 }
 
+// ClaimStockDecrements mocks base method.
+func (m *MockDurableRepo) ClaimStockDecrements(ctx context.Context, now, leaseUntil time.Time, limit int) ([]models.StockDecrement, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClaimStockDecrements", ctx, now, leaseUntil, limit)
+	ret0, _ := ret[0].([]models.StockDecrement)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClaimStockDecrements indicates an expected call of ClaimStockDecrements.
+func (mr *MockDurableRepoMockRecorder) ClaimStockDecrements(ctx, now, leaseUntil, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimStockDecrements", reflect.TypeOf((*MockDurableRepo)(nil).ClaimStockDecrements), ctx, now, leaseUntil, limit)
+}
+
 // ExpireRightAndUpsertMembershipTx mocks base method.
 func (m *MockDurableRepo) ExpireRightAndUpsertMembershipTx(ctx context.Context, token string, membership *models.QueueMembership) (*models.Right, bool, error) {
 	m.ctrl.T.Helper()
@@ -101,6 +116,34 @@ func (m *MockDurableRepo) ListMembershipsByUser(ctx context.Context, userID stri
 func (mr *MockDurableRepoMockRecorder) ListMembershipsByUser(ctx, userID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListMembershipsByUser", reflect.TypeOf((*MockDurableRepo)(nil).ListMembershipsByUser), ctx, userID)
+}
+
+// MarkStockDecrementDelivered mocks base method.
+func (m *MockDurableRepo) MarkStockDecrementDelivered(ctx context.Context, eventID string, now time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkStockDecrementDelivered", ctx, eventID, now)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkStockDecrementDelivered indicates an expected call of MarkStockDecrementDelivered.
+func (mr *MockDurableRepoMockRecorder) MarkStockDecrementDelivered(ctx, eventID, now any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkStockDecrementDelivered", reflect.TypeOf((*MockDurableRepo)(nil).MarkStockDecrementDelivered), ctx, eventID, now)
+}
+
+// RescheduleStockDecrement mocks base method.
+func (m *MockDurableRepo) RescheduleStockDecrement(ctx context.Context, eventID string, nextAttemptAt time.Time, lastError string, now time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RescheduleStockDecrement", ctx, eventID, nextAttemptAt, lastError, now)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RescheduleStockDecrement indicates an expected call of RescheduleStockDecrement.
+func (mr *MockDurableRepoMockRecorder) RescheduleStockDecrement(ctx, eventID, nextAttemptAt, lastError, now any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RescheduleStockDecrement", reflect.TypeOf((*MockDurableRepo)(nil).RescheduleStockDecrement), ctx, eventID, nextAttemptAt, lastError, now)
 }
 
 // SaveInitialStock mocks base method.
@@ -595,17 +638,17 @@ func (m *MockAvitoClient) EXPECT() *MockAvitoClientMockRecorder {
 }
 
 // DecrementStock mocks base method.
-func (m *MockAvitoClient) DecrementStock(ctx context.Context, productID string, quantity int) error {
+func (m *MockAvitoClient) DecrementStock(ctx context.Context, idempotencyKey, productID string, quantity int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DecrementStock", ctx, productID, quantity)
+	ret := m.ctrl.Call(m, "DecrementStock", ctx, idempotencyKey, productID, quantity)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DecrementStock indicates an expected call of DecrementStock.
-func (mr *MockAvitoClientMockRecorder) DecrementStock(ctx, productID, quantity any) *gomock.Call {
+func (mr *MockAvitoClientMockRecorder) DecrementStock(ctx, idempotencyKey, productID, quantity any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrementStock", reflect.TypeOf((*MockAvitoClient)(nil).DecrementStock), ctx, productID, quantity)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrementStock", reflect.TypeOf((*MockAvitoClient)(nil).DecrementStock), ctx, idempotencyKey, productID, quantity)
 }
 
 // GetInitialStock mocks base method.

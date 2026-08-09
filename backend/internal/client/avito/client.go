@@ -22,6 +22,10 @@ const InternalTokenHeader = "X-Internal-Token" //nolint:gosec // header name, no
 
 const defaultTimeout = 5 * time.Second
 
+// IdempotencyKeyHeader lets AvitoBackend safely deduplicate retried stock
+// decrement requests.
+const IdempotencyKeyHeader = "Idempotency-Key"
+
 // ErrUnexpectedStatus is returned when AvitoBackend answers with an unexpected code.
 var ErrUnexpectedStatus = errors.New("avito: unexpected status")
 
@@ -84,7 +88,7 @@ func (c *Client) GetInitialStock(ctx context.Context, productID string) (int, er
 
 // DecrementStock reports a sale. AvitoBackend is the source of truth for the
 // physical stock, so this call is what makes a purchase real outside our service.
-func (c *Client) DecrementStock(ctx context.Context, productID string, quantity int) error {
+func (c *Client) DecrementStock(ctx context.Context, idempotencyKey string, productID string, quantity int) error {
 	payload, err := json.Marshal(decrementRequest{Decrement: quantity})
 	if err != nil {
 		return fmt.Errorf("avito.DecrementStock encode: %w", err)
@@ -95,6 +99,7 @@ func (c *Client) DecrementStock(ctx context.Context, productID string, quantity 
 		return fmt.Errorf("avito.DecrementStock build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(IdempotencyKeyHeader, idempotencyKey)
 	c.authorize(req)
 
 	resp, err := c.http.Do(req)

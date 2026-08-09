@@ -93,6 +93,7 @@ func run() error {
 		cfg.RightTTL,
 		cfg.AvgPaymentTime,
 		cfg.RightHeartbeatTimeout,
+		service.WithStockOutbox(cfg.StockOutboxLease, cfg.StockOutboxBatchSize, cfg.StockOutboxMaxBackoff),
 	)
 
 	srv := &http.Server{
@@ -103,6 +104,7 @@ func run() error {
 	shutdown.Add(srv.Shutdown)
 
 	go runExpirationWorker(ctx, queueService, cfg.ExpirationInterval, log)
+	go runStockDecrementWorker(ctx, queueService, cfg.StockOutboxInterval, log)
 
 	errCh := make(chan error, 1)
 
@@ -156,6 +158,28 @@ func runExpirationWorker(ctx context.Context, svc *service.QueueService, interva
 			if err := svc.ProcessExpirations(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("process expirations", "error", err)
 			}
+		}
+	}
+}
+
+func runStockDecrementWorker(ctx context.Context, svc *service.QueueService, interval time.Duration, log *slog.Logger) {
+	process := func() {
+		if err := svc.ProcessStockDecrementOutbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("process stock decrement outbox", "error", err)
+		}
+	}
+
+	process()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			process()
 		}
 	}
 }

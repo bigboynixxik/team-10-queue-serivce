@@ -23,10 +23,19 @@ type DurableRepo interface {
 	UpsertMembership(ctx context.Context, membership *models.QueueMembership) error
 
 	// UseRightTx atomically locks an ACTIVE right, marks it as USED, decrements
-	// product_stock, and finalizes the matching membership when it still owns
-	// this token. transitioned is false for an already processed webhook, so
-	// external side effects are not repeated.
+	// product_stock, writes a stock decrement outbox event, and finalizes the
+	// matching membership when it still owns this token. transitioned is false
+	// for an already processed webhook, so side effects are not repeated.
 	UseRightTx(ctx context.Context, token string, orderID string, now time.Time) (right *models.Right, transitioned bool, err error)
+
+	// ClaimStockDecrements leases due outbox events for external delivery.
+	ClaimStockDecrements(ctx context.Context, now time.Time, leaseUntil time.Time, limit int) ([]models.StockDecrement, error)
+
+	// MarkStockDecrementDelivered acknowledges a successfully delivered event.
+	MarkStockDecrementDelivered(ctx context.Context, eventID string, now time.Time) error
+
+	// RescheduleStockDecrement releases a failed event for a later retry.
+	RescheduleStockDecrement(ctx context.Context, eventID string, nextAttemptAt time.Time, lastError string, now time.Time) error
 
 	// ExpireRightAndUpsertMembershipTx atomically marks an ACTIVE right as EXPIRED
 	// and persists the corresponding terminal membership state.
@@ -142,5 +151,5 @@ type AvitoClient interface {
 	GetInitialStock(ctx context.Context, productID string) (int, error)
 
 	// DecrementStock notifies AvitoBackend that an item has been permanently sold.
-	DecrementStock(ctx context.Context, productID string, quantity int) error
+	DecrementStock(ctx context.Context, idempotencyKey string, productID string, quantity int) error
 }

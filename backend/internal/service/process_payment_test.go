@@ -35,7 +35,6 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Success() {
 
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-1", "order-1", gomock.Any()).Return(right, true, nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
-	s.mockAvito.EXPECT().DecrementStock(s.ctx, "prod-1", 1).Return(nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
 	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(true, nil)
 	s.mockAdvanceQueueExit("prod-1")
@@ -110,7 +109,6 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_MembershipCacheUpdat
 
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-6", "order-6", gomock.Any()).Return(right, true, nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
-	s.mockAvito.EXPECT().DecrementStock(s.ctx, "prod-1", 1).Return(nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
 	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(false, errors.New("cache offline"))
 	s.mockAdvanceQueueExit("prod-1")
@@ -125,7 +123,6 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_AdvanceQueueFails() 
 
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-7", "order-7", gomock.Any()).Return(right, true, nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
-	s.mockAvito.EXPECT().DecrementStock(s.ctx, "prod-1", 1).Return(nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
 	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(true, nil)
 	s.mockCache.EXPECT().PopAndAllocate(gomock.Any(), "prod-1").

@@ -17,13 +17,35 @@ import (
 
 // QueueService orchestrates the queue state machine, durable storage, and fast cache.
 type QueueService struct {
-	durable          DurableRepo
-	cache            CacheRepo
-	avito            AvitoClient
-	offerTTL         time.Duration
-	paymentTTL       time.Duration
-	avgPaymentTime   time.Duration
-	heartbeatTimeout time.Duration
+	durable               DurableRepo
+	cache                 CacheRepo
+	avito                 AvitoClient
+	offerTTL              time.Duration
+	paymentTTL            time.Duration
+	avgPaymentTime        time.Duration
+	heartbeatTimeout      time.Duration
+	stockOutboxLease      time.Duration
+	stockOutboxBatchSize  int
+	stockOutboxMaxBackoff time.Duration
+}
+
+// Option tweaks QueueService runtime settings that do not belong to the core
+// state-machine constructor.
+type Option func(*QueueService)
+
+// WithStockOutbox configures the durable Avito stock delivery worker.
+func WithStockOutbox(lease time.Duration, batchSize int, maxBackoff time.Duration) Option {
+	return func(s *QueueService) {
+		if lease > 0 {
+			s.stockOutboxLease = lease
+		}
+		if batchSize > 0 {
+			s.stockOutboxBatchSize = batchSize
+		}
+		if maxBackoff > 0 {
+			s.stockOutboxMaxBackoff = maxBackoff
+		}
+	}
 }
 
 // NewQueueService constructs a new QueueService.
@@ -35,16 +57,26 @@ func NewQueueService(
 	paymentTTL time.Duration,
 	avgPaymentTime time.Duration,
 	heartbeatTimeout time.Duration,
+	options ...Option,
 ) *QueueService {
-	return &QueueService{
-		durable:          durable,
-		cache:            cache,
-		avito:            avito,
-		offerTTL:         offerTTL,
-		paymentTTL:       paymentTTL,
-		avgPaymentTime:   avgPaymentTime,
-		heartbeatTimeout: heartbeatTimeout,
+	s := &QueueService{
+		durable:               durable,
+		cache:                 cache,
+		avito:                 avito,
+		offerTTL:              offerTTL,
+		paymentTTL:            paymentTTL,
+		avgPaymentTime:        avgPaymentTime,
+		heartbeatTimeout:      heartbeatTimeout,
+		stockOutboxLease:      defaultStockOutboxLease,
+		stockOutboxBatchSize:  defaultStockOutboxBatchSize,
+		stockOutboxMaxBackoff: defaultStockOutboxMaxBackoff,
 	}
+
+	for _, option := range options {
+		option(s)
+	}
+
+	return s
 }
 
 // membershipClaimTTL bounds how long one transition may hold the claim. It only
@@ -767,8 +799,8 @@ func (s *QueueService) ValidateRightForCheckout(ctx context.Context, token strin
 }
 
 // ProcessPayment handles the asynchronous webhook from the payment gateway.
-// It is idempotent, manages database transactions, handles overselling protection,
-// and triggers queue advancement upon successful physical stock reduction.
+// It is idempotent, persists the Avito stock decrement into the outbox, and
+// triggers queue advancement after the local purchase transition.
 func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID string) error {
 	log := logger.FromContext(ctx)
 	now := time.Now().UTC()
@@ -781,14 +813,6 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 	if transitioned {
 		if errCommit := s.cache.CommitPurchase(context.Background(), right.ProductID, right.Quantity); errCommit != nil {
 			log.ErrorContext(ctx, "failed to commit physical purchase in cache", slog.Any("error", errCommit))
-		}
-
-		// AvitoBackend owns the physical stock, so the sale is not real until it knows
-		// (docs/design_context.md, п. 8). A failure here must not fail the payment:
-		// the money is already taken and our own state is committed, so the only sane
-		// reaction is to log and let reconciliation deal with it.
-		if errStock := s.avito.DecrementStock(ctx, right.ProductID, right.Quantity); errStock != nil {
-			log.ErrorContext(ctx, "failed to report stock decrement to avito", slog.Any("error", errStock))
 		}
 	}
 

@@ -28,7 +28,8 @@ const (
 	readHeaderTimeout = 10 * time.Second
 	shutdownTimeout   = 10 * time.Second
 	// internalTokenHeader mirrors avito.InternalTokenHeader on the other side.
-	internalTokenHeader = "X-Internal-Token" //nolint:gosec // header name, not a credential
+	internalTokenHeader  = "X-Internal-Token" //nolint:gosec // header name, not a credential
+	idempotencyKeyHeader = "Idempotency-Key"
 )
 
 var (
@@ -41,11 +42,22 @@ var (
 type stock struct {
 	mu           sync.Mutex
 	counts       map[string]int
+	processed    map[string]stockDecrementOperation
 	defaultStock int
 }
 
 func newStock(defaultStock int) *stock {
-	return &stock{counts: make(map[string]int), defaultStock: defaultStock}
+	return &stock{
+		counts:       make(map[string]int),
+		processed:    make(map[string]stockDecrementOperation),
+		defaultStock: defaultStock,
+	}
+}
+
+type stockDecrementOperation struct {
+	ProductID string
+	Quantity  int
+	Left      int
 }
 
 func (s *stock) get(productID string) int {
@@ -59,12 +71,21 @@ func (s *stock) get(productID string) int {
 	return s.counts[productID]
 }
 
-// take removes quantity from the product and reports what is left. It never goes
-// below zero: overselling protection lives in Queue Service, and the mock must
-// not mask a bug there by producing a negative stock.
-func (s *stock) take(productID string, quantity int) int {
+// take removes quantity from the product and reports what is left. Repeated
+// calls with the same idempotency key and payload return the original result
+// without decrementing again.
+func (s *stock) take(productID string, quantity int, idempotencyKey string) (left int, replay bool, conflict bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	operation := stockDecrementOperation{ProductID: productID, Quantity: quantity}
+	if previous, ok := s.processed[idempotencyKey]; ok {
+		if previous.ProductID != operation.ProductID || previous.Quantity != operation.Quantity {
+			return previous.Left, false, true
+		}
+
+		return previous.Left, true, false
+	}
 
 	left, ok := s.counts[productID]
 	if !ok {
@@ -76,8 +97,10 @@ func (s *stock) take(productID string, quantity int) int {
 		left = 0
 	}
 	s.counts[productID] = left
+	operation.Left = left
+	s.processed[idempotencyKey] = operation
 
-	return left
+	return left, false, false
 }
 
 func (s *stock) set(productID string, available int) {
@@ -180,17 +203,32 @@ func (s *server) patchStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	idempotencyKey := r.Header.Get(idempotencyKeyHeader)
+	if idempotencyKey == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	var body struct {
 		Decrement int `json:"decrement"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Decrement < 0 {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Decrement <= 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	productID := r.PathValue("product_id")
-	left := s.stock.take(productID, body.Decrement)
-	slog.Info("stock decremented", "product_id", productID, "by", body.Decrement, "left", left)
+	left, replay, conflict := s.stock.take(productID, body.Decrement, idempotencyKey)
+	if conflict {
+		w.WriteHeader(http.StatusConflict)
+		return
+	}
+
+	if replay {
+		slog.Info("stock decrement replayed", "product_id", productID, "by", body.Decrement, "left", left)
+	} else {
+		slog.Info("stock decremented", "product_id", productID, "by", body.Decrement, "left", left)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]int{"available": left})
 }
