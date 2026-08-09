@@ -90,6 +90,24 @@ var (
 		return expired
 	`)
 
+	refreshExpiryTimerScript = redis.NewScript(`
+		local current = redis.call('ZSCORE', KEYS[1], ARGV[1])
+		if not current then
+			return 0
+		end
+
+		local deadline = tonumber(ARGV[2])
+		local now = tonumber(ARGV[3])
+		if tonumber(current) <= now then
+			return 0
+		end
+
+		if deadline > tonumber(current) then
+			redis.call('ZADD', KEYS[1], deadline, ARGV[1])
+		end
+		return 1
+	`)
+
 	popAndAllocateScript = redis.NewScript(`
 		local queueKey = KEYS[1]
 		local stockKey = KEYS[2]
@@ -441,6 +459,26 @@ func (c *CacheRepo) AddToExpiryTimer(ctx context.Context, productID string, user
 		return fmt.Errorf("redis.CacheRepo.AddToExpiryTimer: %w", err)
 	}
 	return nil
+}
+
+// RefreshExpiryTimer extends an existing timer without recreating one already
+// claimed by the expiration worker. Concurrent refreshes can only move it forward.
+func (c *CacheRepo) RefreshExpiryTimer(
+	ctx context.Context,
+	productID string,
+	userID string,
+	expiresAt time.Time,
+) (bool, error) {
+	member := fmt.Sprintf("%s:%s", productID, userID)
+
+	refreshed, err := refreshExpiryTimerScript.Run(
+		ctx, c.client, []string{"expiring:rights"}, member, expiresAt.Unix(), time.Now().UTC().Unix(),
+	).Int()
+	if err != nil {
+		return false, fmt.Errorf("redis.CacheRepo.RefreshExpiryTimer: %w", err)
+	}
+
+	return refreshed == 1, nil
 }
 
 // RemoveFromExpiryTimer removes a user's timer if they complete an action before expiration.

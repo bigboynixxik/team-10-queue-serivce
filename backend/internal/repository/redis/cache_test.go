@@ -762,3 +762,52 @@ func (s *CacheTestSuite) TestGetQueueMetrics_InfrastructureError() {
 	require.Equal(s.T(), 0, rank)
 	require.Equal(s.T(), 0, avail)
 }
+
+func (s *CacheTestSuite) TestRefreshExpiryTimer_ExtendsExistingTimerOnlyForward() {
+	productID := "prod-heartbeat"
+	userID := "user-heartbeat"
+	initial := time.Now().UTC().Add(30 * time.Second).Truncate(time.Second)
+	later := initial.Add(10 * time.Second)
+	earlier := initial.Add(-10 * time.Second)
+
+	err := s.repo.AddToExpiryTimer(s.ctx, productID, userID, initial)
+	require.NoError(s.T(), err)
+
+	refreshed, err := s.repo.RefreshExpiryTimer(s.ctx, productID, userID, later)
+	require.NoError(s.T(), err)
+	require.True(s.T(), refreshed)
+
+	member := productID + ":" + userID
+	score, err := s.client.ZScore(s.ctx, "expiring:rights", member).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(later.Unix()), score)
+
+	refreshed, err = s.repo.RefreshExpiryTimer(s.ctx, productID, userID, earlier)
+	require.NoError(s.T(), err)
+	require.True(s.T(), refreshed, "the lease still exists even when its score is already newer")
+
+	score, err = s.client.ZScore(s.ctx, "expiring:rights", member).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(later.Unix()), score, "a late heartbeat must not shorten the lease")
+
+	expired := time.Now().UTC().Add(-time.Second).Truncate(time.Second)
+	err = s.repo.AddToExpiryTimer(s.ctx, productID, userID, expired)
+	require.NoError(s.T(), err)
+	refreshed, err = s.repo.RefreshExpiryTimer(s.ctx, productID, userID, later.Add(time.Minute))
+	require.NoError(s.T(), err)
+	require.False(s.T(), refreshed, "an expired lease must not be revived before the worker claims it")
+
+	score, err = s.client.ZScore(s.ctx, "expiring:rights", member).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(expired.Unix()), score)
+
+	err = s.repo.RemoveFromExpiryTimer(s.ctx, productID, userID)
+	require.NoError(s.T(), err)
+
+	refreshed, err = s.repo.RefreshExpiryTimer(s.ctx, productID, userID, later.Add(time.Minute))
+	require.NoError(s.T(), err)
+	require.False(s.T(), refreshed, "a worker-claimed lease must not be recreated")
+
+	_, err = s.client.ZScore(s.ctx, "expiring:rights", member).Result()
+	require.ErrorIs(s.T(), err, redis.Nil)
+}
