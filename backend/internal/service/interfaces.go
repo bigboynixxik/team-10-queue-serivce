@@ -10,10 +10,14 @@ import (
 )
 
 // DurableRepo defines the contract for reliable, persistent storage (PostgreSQL).
-// It acts as the source of truth and durable log, but does not handle race conditions.
+// It acts as the source of truth and owns transactional state transitions.
 type DurableRepo interface {
 	// SaveRight persists a newly issued purchase right.
 	SaveRight(ctx context.Context, right *models.Right) error
+
+	// IssueRightAndUpsertMembershipTx atomically persists a newly issued right
+	// and the membership that owns it.
+	IssueRightAndUpsertMembershipTx(ctx context.Context, right *models.Right, membership *models.QueueMembership) error
 
 	// GetRightByToken retrieves a right by its unique token.
 	GetRightByToken(ctx context.Context, token string) (*models.Right, error)

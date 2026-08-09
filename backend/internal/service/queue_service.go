@@ -170,7 +170,7 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 	}
 
 	if errInit := s.cache.InitStock(ctx, productID, totalStock); errInit != nil {
-		log.WarnContext(ctx, "failed to initialize stock in cache", slog.Any("error", errInit))
+		return nil, nil, fmt.Errorf("service.JoinQueue initialize cache stock: %w", errInit)
 	}
 
 	stockModel := &models.ProductStock{
@@ -180,7 +180,7 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 		UpdatedAt:    time.Now().UTC(),
 	}
 	if errSave := s.durable.SaveInitialStock(ctx, stockModel); errSave != nil {
-		log.ErrorContext(ctx, "CRITICAL: failed to save initial stock to db", slog.Any("error", errSave))
+		return nil, nil, fmt.Errorf("service.JoinQueue save initial stock: %w", errSave)
 	}
 
 	alloc, avail, soldOut, errAlloc := s.cache.TryAllocate(ctx, productID, quantity)
@@ -200,12 +200,6 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 		return nil, nil, errProcess
 	}
 
-	if newMem.Status == models.MembershipStatusQueued {
-		if errEnq := s.cache.Enqueue(ctx, productID, userID); errEnq != nil {
-			log.ErrorContext(ctx, "failed to enqueue user", slog.Any("error", errEnq))
-		}
-	}
-
 	return newMem, allocatedRight, nil
 }
 
@@ -222,7 +216,10 @@ func (s *QueueService) checkIdempotency(ctx context.Context, productID, userID s
 	}
 
 	if existingMem.Status == models.MembershipStatusRightActive && existingMem.CurrentToken != nil {
-		right, _ := s.cache.GetRight(ctx, *existingMem.CurrentToken)
+		right, err := s.cache.GetRight(ctx, *existingMem.CurrentToken)
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("get active right: %w", err)
+		}
 		return existingMem, right, true, nil
 	}
 
@@ -255,22 +252,21 @@ func (s *QueueService) processAllocation(
 			ExpiresAt: now.Add(s.paymentTTL),
 		}
 
-		if err := s.durable.SaveRight(ctx, right); err != nil {
-			if errRb := s.cache.RestoreAvailableUnits(context.Background(), mem.ProductID, alloc); errRb != nil {
-				log.ErrorContext(ctx, "CRITICAL: failed to rollback redis stock after failed PG save", slog.Any("error", errRb))
-			}
-			return nil, fmt.Errorf("service.processAllocation save right: %w", err)
-		}
-
 		mem.Status = models.MembershipStatusRightActive
 		mem.CurrentToken = &right.Token
 		mem.ExpiresAt = &right.ExpiresAt
 
-		if err := s.durable.UpsertMembership(ctx, mem); err != nil {
-			log.ErrorContext(ctx, "failed to upsert membership after right active", slog.Any("error", err))
+		if err := s.durable.IssueRightAndUpsertMembershipTx(ctx, right, mem); err != nil {
+			errRb := s.cache.RestoreAvailableUnits(context.Background(), mem.ProductID, alloc)
+			if errRb != nil {
+				log.ErrorContext(ctx, "CRITICAL: failed to rollback redis stock after failed PG save", slog.Any("error", errRb))
+			}
+			return nil, fmt.Errorf("service.processAllocation issue right: %w", errors.Join(err, errRb))
 		}
 
-		s.syncCacheState(ctx, mem, right)
+		if err := s.syncCacheState(ctx, mem, right); err != nil {
+			return nil, fmt.Errorf("service.processAllocation sync active state: %w", err)
+		}
 		return right, nil
 	}
 
@@ -282,13 +278,16 @@ func (s *QueueService) processAllocation(
 		mem.ExpiresAt = exp
 
 		if err := s.durable.UpsertMembership(ctx, mem); err != nil {
-			if errRb := s.cache.RestoreAvailableUnits(context.Background(), mem.ProductID, avail); errRb != nil {
+			errRb := s.cache.RestoreAvailableUnits(context.Background(), mem.ProductID, avail)
+			if errRb != nil {
 				log.ErrorContext(ctx, "CRITICAL: failed to rollback partial redis stock", slog.Any("error", errRb))
 			}
-			return nil, fmt.Errorf("service.processAllocation upsert partial: %w", err)
+			return nil, fmt.Errorf("service.processAllocation upsert partial: %w", errors.Join(err, errRb))
 		}
 
-		s.syncCacheState(ctx, mem, nil)
+		if err := s.syncCacheState(ctx, mem, nil); err != nil {
+			return nil, fmt.Errorf("service.processAllocation sync offer state: %w", err)
+		}
 		return nil, nil
 	}
 
@@ -301,8 +300,15 @@ func (s *QueueService) processAllocation(
 	if err := s.durable.UpsertMembership(ctx, mem); err != nil {
 		return nil, fmt.Errorf("service.processAllocation upsert final state: %w", err)
 	}
+	if mem.Status == models.MembershipStatusQueued {
+		if err := s.cache.Enqueue(ctx, mem.ProductID, mem.UserID); err != nil {
+			return nil, fmt.Errorf("service.processAllocation enqueue: %w", err)
+		}
+	}
 
-	s.syncCacheState(ctx, mem, nil)
+	if err := s.syncCacheState(ctx, mem, nil); err != nil {
+		return nil, fmt.Errorf("service.processAllocation sync final state: %w", err)
+	}
 	return nil, nil
 }
 
@@ -364,10 +370,6 @@ func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string
 		ExpiresAt: now.Add(s.paymentTTL),
 	}
 
-	if err := s.durable.SaveRight(ctx, right); err != nil {
-		return nil, fmt.Errorf("service.AcceptOffer save right: %w", err)
-	}
-
 	mem.Status = models.MembershipStatusRightActive
 	mem.Quantity = acceptedQuantity
 	mem.AvailableQuantity = nil
@@ -375,18 +377,20 @@ func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string
 	mem.ExpiresAt = &right.ExpiresAt
 	mem.UpdatedAt = now
 
-	if err := s.durable.UpsertMembership(ctx, mem); err != nil {
-		log.ErrorContext(ctx, "failed to upsert membership after accept", slog.Any("error", err))
+	if err := s.durable.IssueRightAndUpsertMembershipTx(ctx, right, mem); err != nil {
+		return nil, fmt.Errorf("service.AcceptOffer issue right: %w", err)
 	}
 
-	s.syncCacheState(ctx, mem, right)
+	if err := s.syncCacheState(ctx, mem, right); err != nil {
+		return nil, fmt.Errorf("service.AcceptOffer sync active state: %w", err)
+	}
 
 	if returnedQty > 0 {
 		if err := s.cache.RestoreAvailableUnits(ctx, productID, returnedQty); err != nil {
-			log.ErrorContext(ctx, "failed to restore unused units", slog.Any("error", err))
+			return nil, fmt.Errorf("service.AcceptOffer restore unused units: %w", err)
 		}
 		if err := s.AdvanceQueue(ctx, productID); err != nil {
-			log.ErrorContext(ctx, "failed to advance queue after partial accept", slog.Any("error", err))
+			return nil, fmt.Errorf("service.AcceptOffer advance queue: %w", err)
 		}
 	}
 
@@ -476,27 +480,34 @@ func (s *QueueService) leaveQueue(ctx context.Context, productID, userID string,
 		return fmt.Errorf("service.leaveQueue upsert final state: %w", err)
 	}
 
-	s.syncCacheState(ctx, mem, nil)
+	var operationErrors []error
+	if err := s.syncCacheState(ctx, mem, nil); err != nil {
+		operationErrors = append(operationErrors, fmt.Errorf("sync final state: %w", err))
+	}
 
 	if removeFromQueue {
 		if err := s.cache.RemoveFromQueue(ctx, productID, userID); err != nil {
-			log.ErrorContext(ctx, "failed to remove user from queue", slog.Any("error", err))
+			operationErrors = append(operationErrors, fmt.Errorf("remove from queue: %w", err))
 		}
 	}
 
 	if removeExpiryTimer {
 		if err := s.cache.RemoveFromExpiryTimer(ctx, productID, userID); err != nil {
-			log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", err))
+			operationErrors = append(operationErrors, fmt.Errorf("remove expiry timer: %w", err))
 		}
 	}
 
 	if returnedQty > 0 {
 		if err := s.cache.RestoreAvailableUnits(ctx, productID, returnedQty); err != nil {
-			log.ErrorContext(ctx, "failed to restore unused units", slog.Any("error", err))
+			operationErrors = append(operationErrors, fmt.Errorf("restore unused units: %w", err))
 		}
 		if err := s.AdvanceQueue(ctx, productID); err != nil {
-			log.ErrorContext(ctx, "failed to advance queue after leaving", slog.Any("error", err))
+			operationErrors = append(operationErrors, fmt.Errorf("advance queue: %w", err))
 		}
+	}
+
+	if err := errors.Join(operationErrors...); err != nil {
+		return fmt.Errorf("service.leaveQueue cache reconciliation: %w", err)
 	}
 
 	return nil
@@ -509,8 +520,6 @@ func (s *QueueService) expireActiveRight(
 	mem *models.QueueMembership,
 	removeExpiryTimer bool,
 ) error {
-	log := logger.FromContext(ctx)
-
 	if mem.CurrentToken == nil {
 		return models.ErrInvalidStatus
 	}
@@ -531,48 +540,55 @@ func (s *QueueService) expireActiveRight(
 
 	if !transitioned {
 		if right != nil {
-			if errCache := s.cache.SetRight(ctx, right); errCache != nil {
-				log.ErrorContext(ctx, "failed to refresh terminal right cache", slog.Any("error", errCache))
-			}
 			if right.Status == models.RightStatusExpired {
-				s.syncCacheState(ctx, &finalMem, right)
+				if errSync := s.syncCacheState(ctx, &finalMem, right); errSync != nil {
+					return fmt.Errorf("service.expireActiveRight refresh expired state: %w", errSync)
+				}
+			} else if errCache := s.cache.SetRight(ctx, right); errCache != nil {
+				return fmt.Errorf("service.expireActiveRight refresh terminal right: %w", errCache)
 			}
 		}
 		return nil
 	}
 
-	s.syncCacheState(ctx, &finalMem, right)
+	var operationErrors []error
+	if errSync := s.syncCacheState(ctx, &finalMem, right); errSync != nil {
+		operationErrors = append(operationErrors, fmt.Errorf("sync expired state: %w", errSync))
+	}
 
 	if removeExpiryTimer {
 		if errRemove := s.cache.RemoveFromExpiryTimer(ctx, mem.ProductID, mem.UserID); errRemove != nil {
-			log.ErrorContext(ctx, "failed to remove expired right timer", slog.Any("error", errRemove))
+			operationErrors = append(operationErrors, fmt.Errorf("remove expiry timer: %w", errRemove))
 		}
 	}
 
 	if returnedQty > 0 {
 		if errRestore := s.cache.RestoreAvailableUnits(ctx, mem.ProductID, returnedQty); errRestore != nil {
-			log.ErrorContext(ctx, "failed to restore expired right units", slog.Any("error", errRestore))
+			operationErrors = append(operationErrors, fmt.Errorf("restore expired units: %w", errRestore))
 		}
 	}
 
 	if errAdvance := s.AdvanceQueue(ctx, mem.ProductID); errAdvance != nil {
-		log.ErrorContext(ctx, "failed to advance queue after right expiration", slog.Any("error", errAdvance))
+		operationErrors = append(operationErrors, fmt.Errorf("advance queue: %w", errAdvance))
+	}
+
+	if errJoined := errors.Join(operationErrors...); errJoined != nil {
+		return fmt.Errorf("service.expireActiveRight cache reconciliation: %w", errJoined)
 	}
 
 	return nil
 }
 
-// syncCacheState is a DRY helper to update Redis and broadcast the state.
-func (s *QueueService) syncCacheState(ctx context.Context, mem *models.QueueMembership, right *models.Right) {
+// syncCacheState updates the Redis state required by the state machine. Event
+// publication remains best effort because missing a notification does not alter
+// ownership, stock, or expiration semantics.
+func (s *QueueService) syncCacheState(ctx context.Context, mem *models.QueueMembership, right *models.Right) error {
 	log := logger.FromContext(ctx)
 
 	if right != nil {
 		if err := s.cache.SetRight(ctx, right); err != nil {
-			log.ErrorContext(ctx, "failed to cache right", slog.Any("error", err))
+			return fmt.Errorf("cache right: %w", err)
 		}
-	}
-	if err := s.cache.SetMembership(ctx, mem); err != nil {
-		log.ErrorContext(ctx, "failed to cache membership", slog.Any("error", err))
 	}
 	if mem.ExpiresAt != nil {
 		expiryDeadline := *mem.ExpiresAt
@@ -580,12 +596,17 @@ func (s *QueueService) syncCacheState(ctx context.Context, mem *models.QueueMemb
 			expiryDeadline = s.rightHeartbeatDeadline(time.Now().UTC(), expiryDeadline)
 		}
 		if err := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, expiryDeadline); err != nil {
-			log.ErrorContext(ctx, "failed to add to expiry timer", slog.Any("error", err))
+			return fmt.Errorf("add expiry timer: %w", err)
 		}
 	}
-	if err := s.cache.PublishEvent(ctx, mem.ProductID, mem.UserID, map[string]string{"status": string(mem.Status)}); err != nil {
-		log.ErrorContext(ctx, "failed to publish event", slog.Any("error", err))
+	if err := s.cache.SetMembership(ctx, mem); err != nil {
+		return fmt.Errorf("cache membership: %w", err)
 	}
+	if err := s.cache.PublishEvent(ctx, mem.ProductID, mem.UserID, map[string]string{"status": string(mem.Status)}); err != nil {
+		log.WarnContext(ctx, "failed to publish best-effort event", slog.Any("error", err))
+	}
+
+	return nil
 }
 
 // AdvanceQueue acts as an internal engine to push the queue forward when stock frees up.
@@ -625,7 +646,7 @@ func (s *QueueService) AdvanceQueue(ctx context.Context, productID string) error
 				errors.Join(models.ErrConcurrentJoin, errRollback))
 		}
 
-		func() {
+		errStep := func() error {
 			defer func() {
 				if errRelease := s.cache.ReleaseMembershipClaim(
 					context.WithoutCancel(ctx), productID, uid, claimOwner,
@@ -635,8 +656,11 @@ func (s *QueueService) AdvanceQueue(ctx context.Context, productID string) error
 				}
 			}()
 
-			s.applyAdvanceStep(ctx, productID, uid, alloc, avail, status, score)
+			return s.applyAdvanceStep(ctx, productID, uid, alloc, avail, status, score)
 		}()
+		if errStep != nil {
+			return fmt.Errorf("service.AdvanceQueue apply step for user %s: %w", uid, errStep)
+		}
 	}
 
 	return nil
@@ -644,14 +668,11 @@ func (s *QueueService) AdvanceQueue(ctx context.Context, productID string) error
 
 // applyAdvanceStep processes a single iteration of the queue advancement logic,
 // updating the durable store and cache based on the user's new status.
-func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid string, alloc, avail int, status models.MembershipStatus, score float64) {
-	log := logger.FromContext(ctx)
-
+func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid string, alloc, avail int, status models.MembershipStatus, score float64) error {
 	mem, err := s.cache.GetMembership(ctx, productID, uid)
 	if err != nil {
-		_ = s.rollbackAdvance(ctx, productID, uid, alloc+avail, score)
-		log.ErrorContext(ctx, "failed to get membership for advanced user", slog.Any("error", err), slog.String("user_id", uid))
-		return
+		errRollback := s.rollbackAdvance(ctx, productID, uid, alloc+avail, score)
+		return fmt.Errorf("get membership: %w", errors.Join(err, errRollback))
 	}
 
 	now := time.Now().UTC()
@@ -669,20 +690,17 @@ func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid stri
 			ExpiresAt: now.Add(s.paymentTTL),
 		}
 
-		if errSave := s.durable.SaveRight(ctx, right); errSave != nil {
-			_ = s.rollbackAdvance(ctx, productID, uid, alloc, score)
-			log.ErrorContext(ctx, "failed to save right in advance queue", slog.Any("error", errSave))
-			return
-		}
-
 		mem.Status = models.MembershipStatusRightActive
 		mem.CurrentToken = &right.Token
 		mem.ExpiresAt = &right.ExpiresAt
 
-		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
-			log.ErrorContext(ctx, "failed to upsert membership", slog.Any("error", errUpsert))
+		if errIssue := s.durable.IssueRightAndUpsertMembershipTx(ctx, right, mem); errIssue != nil {
+			errRollback := s.rollbackAdvance(ctx, productID, uid, alloc, score)
+			return fmt.Errorf("issue right: %w", errors.Join(errIssue, errRollback))
 		}
-		s.syncCacheState(ctx, mem, right)
+		if errSync := s.syncCacheState(ctx, mem, right); errSync != nil {
+			return fmt.Errorf("sync active state: %w", errSync)
+		}
 
 	case models.MembershipStatusOfferPending:
 		mem.Status = models.MembershipStatusOfferPending
@@ -693,21 +711,25 @@ func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid stri
 		mem.ExpiresAt = exp
 
 		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
-			_ = s.rollbackAdvance(ctx, productID, uid, avail, score)
-			log.ErrorContext(ctx, "failed to upsert partial membership", slog.Any("error", errUpsert))
-			return
+			errRollback := s.rollbackAdvance(ctx, productID, uid, avail, score)
+			return fmt.Errorf("upsert partial membership: %w", errors.Join(errUpsert, errRollback))
 		}
-		s.syncCacheState(ctx, mem, nil)
+		if errSync := s.syncCacheState(ctx, mem, nil); errSync != nil {
+			return fmt.Errorf("sync offer state: %w", errSync)
+		}
 
 	case models.MembershipStatusSoldOut:
 		mem.Status = models.MembershipStatusSoldOut
 		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
-			_ = s.rollbackAdvance(ctx, productID, uid, 0, score)
-			log.ErrorContext(ctx, "failed to upsert sold_out membership", slog.Any("error", errUpsert))
-			return
+			errRollback := s.rollbackAdvance(ctx, productID, uid, 0, score)
+			return fmt.Errorf("upsert sold_out membership: %w", errors.Join(errUpsert, errRollback))
 		}
-		s.syncCacheState(ctx, mem, nil)
+		if errSync := s.syncCacheState(ctx, mem, nil); errSync != nil {
+			return fmt.Errorf("sync sold-out state: %w", errSync)
+		}
 	}
+
+	return nil
 }
 
 // rollbackAdvance handles disaster recovery if the durable database fails during queue advancement.
@@ -802,7 +824,6 @@ func (s *QueueService) ValidateRightForCheckout(ctx context.Context, token strin
 // It is idempotent, persists the Avito stock decrement into the outbox, and
 // triggers queue advancement after the local purchase transition.
 func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID string) error {
-	log := logger.FromContext(ctx)
 	now := time.Now().UTC()
 
 	right, transitioned, err := s.durable.UseRightTx(ctx, token, orderID, now)
@@ -810,24 +831,30 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 		return fmt.Errorf("service.ProcessPayment transaction: %w", err)
 	}
 
+	var operationErrors []error
 	if transitioned {
 		if errCommit := s.cache.CommitPurchase(context.Background(), right.ProductID, right.Quantity); errCommit != nil {
-			log.ErrorContext(ctx, "failed to commit physical purchase in cache", slog.Any("error", errCommit))
+			operationErrors = append(operationErrors, fmt.Errorf("commit cached purchase: %w", errCommit))
 		}
 	}
 
 	if errCacheRight := s.cache.SetRight(ctx, right); errCacheRight != nil {
-		log.ErrorContext(ctx, "failed to refresh used right cache", slog.Any("error", errCacheRight))
+		operationErrors = append(operationErrors, fmt.Errorf("cache used right: %w", errCacheRight))
 	}
 
 	if _, errCacheMembership := s.cache.MarkPurchasedIfCurrentToken(ctx, right, now); errCacheMembership != nil {
-		log.ErrorContext(ctx, "failed to mark cached membership as purchased", slog.Any("error", errCacheMembership))
+		operationErrors = append(operationErrors, fmt.Errorf("cache purchased membership: %w", errCacheMembership))
 	}
 
-	if transitioned {
-		if errAdvance := s.AdvanceQueue(context.Background(), right.ProductID); errAdvance != nil {
-			log.ErrorContext(ctx, "failed to advance queue after successful payment", slog.Any("error", errAdvance))
-		}
+	// Advancing is idempotent and is also attempted for duplicate webhooks. That
+	// lets a retry repair a previous attempt that committed PostgreSQL but failed
+	// while advancing Redis.
+	if errAdvance := s.AdvanceQueue(context.Background(), right.ProductID); errAdvance != nil {
+		operationErrors = append(operationErrors, fmt.Errorf("advance queue: %w", errAdvance))
+	}
+
+	if errJoined := errors.Join(operationErrors...); errJoined != nil {
+		return fmt.Errorf("service.ProcessPayment cache reconciliation: %w", errJoined)
 	}
 
 	return nil

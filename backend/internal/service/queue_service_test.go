@@ -104,6 +104,22 @@ func (s *QueueServiceTestSuite) mockDurableUpsert(status models.MembershipStatus
 	})).Return(nil)
 }
 
+// mockDurableIssue verifies the atomic durable write of a right and its owner.
+func (s *QueueServiceTestSuite) mockDurableIssue(quantity int, err error) {
+	s.mockDurable.EXPECT().IssueRightAndUpsertMembershipTx(
+		s.ctx,
+		gomock.Cond(func(x any) bool {
+			right, ok := x.(*models.Right)
+			return ok && right.Status == models.RightStatusActive && right.Quantity == quantity
+		}),
+		gomock.Cond(func(x any) bool {
+			membership, ok := x.(*models.QueueMembership)
+			return ok && membership.Status == models.MembershipStatusRightActive &&
+				membership.CurrentToken != nil
+		}),
+	).Return(err)
+}
+
 // mockMembershipFetch DRY helper to mock a specific membership state retrieval.
 func (s *QueueServiceTestSuite) mockMembershipFetch(status models.MembershipStatus, avail *int) {
 	mem := &models.QueueMembership{

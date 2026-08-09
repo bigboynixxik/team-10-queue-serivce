@@ -207,6 +207,49 @@ func (dr *DurableRepo) SaveRight(ctx context.Context, right *models.Right) error
 	return nil
 }
 
+// IssueRightAndUpsertMembershipTx persists both sides of a newly issued right.
+// Keeping them in one transaction prevents an ACTIVE right from being left
+// without the membership that owns its token.
+func (dr *DurableRepo) IssueRightAndUpsertMembershipTx(
+	ctx context.Context,
+	right *models.Right,
+	membership *models.QueueMembership,
+) error {
+	log := logger.FromContext(ctx)
+
+	tx, err := dr.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx begin: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
+			log.Error("failed to rollback transaction", "error", rbErr)
+		}
+	}()
+
+	query, args, err := dr.sq.Insert("rights").
+		Columns("token", "user_id", "product_id", "quantity", "status", "order_id", "created_at", "expires_at", "used_at").
+		Values(right.Token, right.UserID, right.ProductID, right.Quantity, right.Status, right.OrderID, right.CreatedAt, right.ExpiresAt, right.UsedAt).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx right query build: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx right execute: %w", err)
+	}
+
+	if err := dr.upsertMembershipTx(ctx, tx, membership); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx membership: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx commit: %w", err)
+	}
+
+	return nil
+}
+
 // GetRightByToken retrieves a right by its unique token.
 // Returns models.ErrTokenNotFound if the token does not exist[cite: 37].
 func (dr *DurableRepo) GetRightByToken(ctx context.Context, token string) (*models.Right, error) {

@@ -50,6 +50,7 @@ func (s *QueueServiceTestSuite) TestProcessPayment_DuplicateDoesNotRepeatStockSi
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-used", "order-1", gomock.Any()).Return(right, false, nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
 	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(false, nil)
+	s.mockAdvanceQueueExit("prod-1")
 
 	err := s.srv.ProcessPayment(s.ctx, "token-used", "order-1")
 
@@ -62,6 +63,7 @@ func (s *QueueServiceTestSuite) TestProcessPayment_DuplicateRepairsMembership() 
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-used", "order-1", gomock.Any()).Return(right, false, nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
 	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(true, nil)
+	s.mockAdvanceQueueExit("prod-1")
 
 	err := s.srv.ProcessPayment(s.ctx, "token-used", "order-1")
 
@@ -74,6 +76,7 @@ func (s *QueueServiceTestSuite) TestProcessPayment_StaleWebhookDoesNotReplaceCur
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "old-token", "order-old", gomock.Any()).Return(right, false, nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
 	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(false, nil)
+	s.mockAdvanceQueueExit("prod-1")
 
 	err := s.srv.ProcessPayment(s.ctx, "old-token", "order-old")
 
@@ -115,7 +118,7 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_MembershipCacheUpdat
 
 	err := s.srv.ProcessPayment(s.ctx, "token-6", "order-6")
 
-	require.NoError(s.T(), err)
+	require.ErrorContains(s.T(), err, "cache purchased membership")
 }
 
 func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_AdvanceQueueFails() {
@@ -130,5 +133,5 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_AdvanceQueueFails() 
 
 	err := s.srv.ProcessPayment(s.ctx, "token-7", "order-7")
 
-	require.NoError(s.T(), err)
+	require.ErrorContains(s.T(), err, "advance queue")
 }

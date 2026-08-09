@@ -15,12 +15,7 @@ import (
 func (s *QueueServiceTestSuite) TestAcceptOffer_Success_Full() {
 	s.mockAcceptOfferFetch(models.MembershipStatusOfferPending, ptr(2))
 
-	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Cond(func(x any) bool {
-		r, ok := x.(*models.Right)
-		return ok && r.Status == models.RightStatusActive && r.Quantity == 2
-	})).Return(nil)
-
-	s.mockDurableUpsert(models.MembershipStatusRightActive, nil)
+	s.mockDurableIssue(2, nil)
 	s.mockSyncCacheState(models.MembershipStatusRightActive, true, true)
 
 	right, err := s.srv.AcceptOffer(s.ctx, "prod-1", "user-1", 2)
@@ -36,12 +31,7 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_Success_Full() {
 func (s *QueueServiceTestSuite) TestAcceptOffer_Success_Partial() {
 	s.mockAcceptOfferFetch(models.MembershipStatusOfferPending, ptr(5))
 
-	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Cond(func(x any) bool {
-		r, ok := x.(*models.Right)
-		return ok && r.Status == models.RightStatusActive && r.Quantity == 2
-	})).Return(nil)
-
-	s.mockDurableUpsert(models.MembershipStatusRightActive, nil)
+	s.mockDurableIssue(2, nil)
 	s.mockSyncCacheState(models.MembershipStatusRightActive, true, true)
 
 	s.mockCache.EXPECT().RestoreAvailableUnits(s.ctx, "prod-1", 3).Return(nil)
@@ -120,7 +110,7 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_SaveRightError() {
 	s.mockAcceptOfferFetch(models.MembershipStatusOfferPending, ptr(2))
 
 	dbErr := errors.New("db save right error")
-	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Any()).Return(dbErr)
+	s.mockDurableIssue(2, dbErr)
 
 	right, err := s.srv.AcceptOffer(s.ctx, "prod-1", "user-1", 2)
 

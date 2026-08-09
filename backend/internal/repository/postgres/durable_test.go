@@ -150,6 +150,58 @@ func (s *RepoTestSuite) TestSaveRight_InvalidQuantity() {
 	require.Error(s.T(), err)
 }
 
+func (s *RepoTestSuite) TestIssueRightAndUpsertMembershipTx_Success() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	right := &models.Right{
+		Token: "atomic-token", UserID: "user-1", ProductID: "prod-1",
+		Quantity: 2, Status: models.RightStatusActive,
+		CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute),
+	}
+	membership := &models.QueueMembership{
+		ProductID: "prod-1", UserID: "user-1",
+		Status: models.MembershipStatusRightActive, Quantity: 2,
+		CurrentToken: &right.Token, ExpiresAt: &right.ExpiresAt,
+		CreatedAt: now, UpdatedAt: now,
+	}
+
+	err := s.repo.IssueRightAndUpsertMembershipTx(s.ctx, right, membership)
+	require.NoError(s.T(), err)
+
+	var token string
+	err = s.pool.QueryRow(s.ctx, `
+		SELECT current_token
+		FROM queue_memberships
+		WHERE product_id = $1 AND user_id = $2
+	`, "prod-1", "user-1").Scan(&token)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), right.Token, token)
+
+	storedRight, err := s.repo.GetRightByToken(s.ctx, right.Token)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.RightStatusActive, storedRight.Status)
+}
+
+func (s *RepoTestSuite) TestIssueRightAndUpsertMembershipTx_RollsBackRightWhenMembershipFails() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	right := &models.Right{
+		Token: "rolled-back-token", UserID: "user-1", ProductID: "prod-1",
+		Quantity: 1, Status: models.RightStatusActive,
+		CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute),
+	}
+	invalidMembership := &models.QueueMembership{
+		ProductID: "prod-1", UserID: "user-1",
+		Status: models.MembershipStatusRightActive, Quantity: 0,
+		CurrentToken: &right.Token, ExpiresAt: &right.ExpiresAt,
+		CreatedAt: now, UpdatedAt: now,
+	}
+
+	err := s.repo.IssueRightAndUpsertMembershipTx(s.ctx, right, invalidMembership)
+	require.Error(s.T(), err)
+
+	_, err = s.repo.GetRightByToken(s.ctx, right.Token)
+	require.ErrorIs(s.T(), err, models.ErrTokenNotFound)
+}
+
 // TestGetRightByToken_NotFound validates correct error mapping for missing tokens.
 func (s *RepoTestSuite) TestGetRightByToken_NotFound() {
 	_, err := s.repo.GetRightByToken(s.ctx, "unknown-token")

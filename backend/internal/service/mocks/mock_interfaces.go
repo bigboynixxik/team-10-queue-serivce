@@ -103,6 +103,20 @@ func (mr *MockDurableRepoMockRecorder) GetRightByToken(ctx, token any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRightByToken", reflect.TypeOf((*MockDurableRepo)(nil).GetRightByToken), ctx, token)
 }
 
+// IssueRightAndUpsertMembershipTx mocks base method.
+func (m *MockDurableRepo) IssueRightAndUpsertMembershipTx(ctx context.Context, right *models.Right, membership *models.QueueMembership) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IssueRightAndUpsertMembershipTx", ctx, right, membership)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// IssueRightAndUpsertMembershipTx indicates an expected call of IssueRightAndUpsertMembershipTx.
+func (mr *MockDurableRepoMockRecorder) IssueRightAndUpsertMembershipTx(ctx, right, membership any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueRightAndUpsertMembershipTx", reflect.TypeOf((*MockDurableRepo)(nil).IssueRightAndUpsertMembershipTx), ctx, right, membership)
+}
+
 // LoadRecoverySnapshot mocks base method.
 func (m *MockDurableRepo) LoadRecoverySnapshot(ctx context.Context) (*models.RecoverySnapshot, error) {
 	m.ctrl.T.Helper()

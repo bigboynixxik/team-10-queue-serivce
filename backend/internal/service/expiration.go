@@ -189,13 +189,9 @@ func (s *QueueService) handleExpiredKey(
 func (s *QueueService) expirePendingOffer(
 	ctx context.Context, mem *models.QueueMembership, now time.Time,
 ) error {
-	log := logger.FromContext(ctx)
-
 	if mem.AvailableQuantity == nil {
-		log.ErrorContext(ctx, "expired offer has no available quantity",
-			slog.String("user_id", mem.UserID))
-
-		return nil
+		return fmt.Errorf("expired offer for user %s has no available quantity: %w",
+			mem.UserID, models.ErrInvalidStatus)
 	}
 
 	productID := mem.ProductID
@@ -211,17 +207,23 @@ func (s *QueueService) expirePendingOffer(
 		return fmt.Errorf("upsert expired membership: %w", err)
 	}
 
-	s.syncCacheState(ctx, mem, nil)
+	var operationErrors []error
+	if errSync := s.syncCacheState(ctx, mem, nil); errSync != nil {
+		operationErrors = append(operationErrors, fmt.Errorf("sync expired offer: %w", errSync))
+	}
 
 	if returnedQty > 0 {
 		if errRestore := s.cache.RestoreAvailableUnits(ctx, productID, returnedQty); errRestore != nil {
-			log.ErrorContext(ctx, "failed to restore units on expiration", slog.Any("error", errRestore))
+			operationErrors = append(operationErrors, fmt.Errorf("restore expired offer units: %w", errRestore))
 		}
 	}
 
 	if errAdvance := s.AdvanceQueue(ctx, productID); errAdvance != nil {
-		log.ErrorContext(ctx, "failed to advance queue after expiration",
-			slog.Any("error", errAdvance), slog.String("product_id", productID))
+		operationErrors = append(operationErrors, fmt.Errorf("advance queue: %w", errAdvance))
+	}
+
+	if errJoined := errors.Join(operationErrors...); errJoined != nil {
+		return fmt.Errorf("expire pending offer cache reconciliation: %w", errJoined)
 	}
 
 	return nil

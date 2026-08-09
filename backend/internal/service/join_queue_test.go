@@ -52,6 +52,23 @@ func (s *QueueServiceTestSuite) TestJoinQueue_Idempotency_RightActive() {
 	assert.Equal(s.T(), existingRight, right)
 }
 
+func (s *QueueServiceTestSuite) TestJoinQueue_Idempotency_RightCacheErrorIsReturned() {
+	token := "existing-token-123"
+	existingMem := &models.QueueMembership{
+		ProductID: "prod-1", UserID: "user-1",
+		Status: models.MembershipStatusRightActive, CurrentToken: &token,
+	}
+	cacheErr := errors.New("right cache unavailable")
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(existingMem, nil)
+	s.mockCache.EXPECT().GetRight(s.ctx, token).Return(nil, cacheErr)
+
+	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)
+
+	require.ErrorIs(s.T(), err, cacheErr)
+	assert.Nil(s.T(), mem)
+	assert.Nil(s.T(), right)
+}
+
 func (s *QueueServiceTestSuite) TestJoinQueue_MembershipFetchError() {
 	unexpectedErr := errors.New("redis timeout")
 	s.mockCache.EXPECT().
@@ -87,12 +104,7 @@ func (s *QueueServiceTestSuite) TestJoinQueue_AvitoError() {
 func (s *QueueServiceTestSuite) TestJoinQueue_FullAllocation() {
 	s.mockJoinQueueBase(10, 2, 2, 0, false, nil)
 
-	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Cond(func(x any) bool {
-		r, ok := x.(*models.Right)
-		return ok && r.Status == models.RightStatusActive && r.Quantity == 2
-	})).Return(nil)
-
-	s.mockDurableUpsert(models.MembershipStatusRightActive, nil)
+	s.mockDurableIssue(2, nil)
 	s.mockSyncCacheState(models.MembershipStatusRightActive, true, true)
 
 	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 2)
@@ -106,12 +118,27 @@ func (s *QueueServiceTestSuite) TestJoinQueue_FullAllocation_Rollback() {
 	s.mockJoinQueueBase(5, 1, 1, 0, false, nil)
 
 	dbErr := errors.New("db connection lost")
-	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Any()).Return(dbErr)
+	s.mockDurableIssue(1, dbErr)
 	s.mockCache.EXPECT().RestoreAvailableUnits(gomock.Any(), "prod-1", 1).Return(nil)
 
 	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)
 
 	require.ErrorIs(s.T(), err, dbErr)
+	assert.Nil(s.T(), mem)
+	assert.Nil(s.T(), right)
+}
+
+func (s *QueueServiceTestSuite) TestJoinQueue_FullAllocation_ReportsRollbackFailure() {
+	s.mockJoinQueueBase(5, 1, 1, 0, false, nil)
+	dbErr := errors.New("db connection lost")
+	rollbackErr := errors.New("redis rollback failed")
+	s.mockDurableIssue(1, dbErr)
+	s.mockCache.EXPECT().RestoreAvailableUnits(gomock.Any(), "prod-1", 1).Return(rollbackErr)
+
+	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)
+
+	require.ErrorIs(s.T(), err, dbErr)
+	require.ErrorIs(s.T(), err, rollbackErr)
 	assert.Nil(s.T(), mem)
 	assert.Nil(s.T(), right)
 }
@@ -177,6 +204,64 @@ func (s *QueueServiceTestSuite) TestJoinQueue_TryAllocateError() {
 	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)
 
 	require.ErrorIs(s.T(), err, expectedErr)
+	assert.Nil(s.T(), mem)
+	assert.Nil(s.T(), right)
+}
+
+func (s *QueueServiceTestSuite) TestJoinQueue_InitStockErrorIsReturned() {
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
+		Return(nil, models.ErrTokenNotFound).Times(2)
+	s.expectMembershipClaim("prod-1", "user-1")
+	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(10, nil)
+	cacheErr := errors.New("redis unavailable")
+	s.mockCache.EXPECT().InitStock(s.ctx, "prod-1", 10).Return(cacheErr)
+
+	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)
+
+	require.ErrorIs(s.T(), err, cacheErr)
+	assert.Nil(s.T(), mem)
+	assert.Nil(s.T(), right)
+}
+
+func (s *QueueServiceTestSuite) TestJoinQueue_SaveInitialStockErrorIsReturned() {
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
+		Return(nil, models.ErrTokenNotFound).Times(2)
+	s.expectMembershipClaim("prod-1", "user-1")
+	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(10, nil)
+	s.mockCache.EXPECT().InitStock(s.ctx, "prod-1", 10).Return(nil)
+	dbErr := errors.New("postgres unavailable")
+	s.mockDurable.EXPECT().SaveInitialStock(s.ctx, gomock.Any()).Return(dbErr)
+
+	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)
+
+	require.ErrorIs(s.T(), err, dbErr)
+	assert.Nil(s.T(), mem)
+	assert.Nil(s.T(), right)
+}
+
+func (s *QueueServiceTestSuite) TestJoinQueue_EnqueueErrorIsReturned() {
+	s.mockJoinQueueBase(10, 1, 0, 0, false, nil)
+	s.mockDurableUpsert(models.MembershipStatusQueued, nil)
+	queueErr := errors.New("redis queue unavailable")
+	s.mockCache.EXPECT().Enqueue(s.ctx, "prod-1", "user-1").Return(queueErr)
+
+	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)
+
+	require.ErrorIs(s.T(), err, queueErr)
+	assert.Nil(s.T(), mem)
+	assert.Nil(s.T(), right)
+}
+
+func (s *QueueServiceTestSuite) TestJoinQueue_ExpiryTimerErrorIsReturned() {
+	s.mockJoinQueueBase(10, 1, 1, 0, false, nil)
+	s.mockDurableIssue(1, nil)
+	s.mockCache.EXPECT().SetRight(s.ctx, gomock.Any()).Return(nil)
+	timerErr := errors.New("redis timer unavailable")
+	s.mockCache.EXPECT().AddToExpiryTimer(s.ctx, "prod-1", "user-1", gomock.Any()).Return(timerErr)
+
+	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)
+
+	require.ErrorIs(s.T(), err, timerErr)
 	assert.Nil(s.T(), mem)
 	assert.Nil(s.T(), right)
 }
