@@ -1,111 +1,121 @@
-# Диаграммы последовательности: Авито Очередь
+# Диаграммы последовательности: «Авито Очередь»
 
-Четыре сценария покрывают все финальные состояния основного пути (мгновенная покупка / успех после ожидания / отказ из-за распроданности / многоштучный запрос с частичным предложением). Подробное описание каждого пронумерованного перехода — в `docs/user_story.md` (для сценариев 1–3; сценарий 4 пока не задокументирован там отдельно).
+Четыре сценария покрывают все терминальные состояния основного пути: немедленная покупка, покупка после ожидания, отказ вследствие исчерпания остатка, многоштучный запрос с частичным предложением. Обоснование принятых решений приведено в `docs/design_context.md`, форма прикладного интерфейса — в `docs/api.yml`.
 
-В сценариях 1–3 каждый покупатель запрашивает `quantity: 1`, поэтому это поле в запросах и в `product_count` опущено для краткости и показано как `product_count--`. Сценарий 4 — единственный, где `quantity` больше 1 и явно участвует в логике.
+Обозначения участников едины для всех сценариев: `A`, `B`, `C` — покупатели (браузер), `QS` — Queue Service, `AB` — AvitoBackend, внешняя система Авито, находящаяся вне области кейса и инкапсулирующая оформление заказа, оплату, а также данные о товаре и его остатке.
 
-Условное обозначение участников везде одинаковое: `A`, `B`, `C` — покупатели (браузер), `QS` — Queue Service (наш backend), `AB` — AvitoBackend (внешний бэкенд Авито, вне скоупа кейса; инкапсулирует все условно существующие API текущего бэкенда Авито — оформление заказа/оплату, а также данные о товаре и его остатке).
+В сценариях 1–3 каждый покупатель запрашивает одну единицу, вследствие чего поле `quantity` в запросах опущено для краткости. Сценарий 4 — единственный, в котором запрашиваемое количество превышает единицу и участвует в логике распределения.
 
-Перед созданием заказа в AvitoBackend покупатель напрямую вызывает `GET /rights/{token}` у Queue Service, чтобы проверить своё право — это отсекает невалидные попытки (чужой/просроченный токен) до того, как они дойдут до эндпоинта создания заказа AvitoBackend. Этот шаг показан во всех сценариях перед `create order`.
+Перед созданием заказа покупатель обращается к `GET /rights/{token}` за проверкой своего права. Проверка отсекает недействительные попытки — предъявление чужого либо истёкшего права — до того, как они достигнут конечной точки оформления заказа. Шаг показан во всех сценариях.
+
+Обращение `GET /products/{product_id}/stock` к AvitoBackend выполняется при обработке входа в очередь, не завершившегося идемпотентным возвратом существующего членства; полученное значение применяется исключительно при отсутствии локального состояния товара (`docs/design_context.md`, п. 9). Для краткости шаг показан только в сценарии 4, где значение остатка существенно для понимания последующих переходов.
+
+Мгновенные состояния сопровождаются уведомлением по каналу реального времени. Публикуемое в Redis сообщение является сигналом инвалидации: обработчик повторно читает текущее состояние и передаёт клиенту фактическое представление. На диаграммах показан результат, то есть состояние, полученное клиентом.
+
+Блоки `alt`, `opt` и `par` применяются в точках действительного ветвления — принятие решения пользователем, состязание «успел либо не успел», — а не для перечисления всех теоретически возможных исходов одного вызова.
 
 ---
 
-## Сценарий 1 — покупатель один, очереди нет
+## Сценарий 1 — единственный покупатель, очередь не образуется
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant A as Покупатель A (браузер)
-    participant QS as Queue Service (наш backend)
+    participant QS as Queue Service
     participant AB as AvitoBackend (внешний, вне скоупа)
 
     A->>QS: POST /queue/{product_id}/members
-    QS-->>A: 201 { status: RIGHT_ACTIVE, token, expires_at }
-    Note over A: available_units > 0 и очередь пуста → право выдано мгновенно,<br/>экран ожидания не показывается
+    QS-->>A: 201 { status: RIGHT_ACTIVE, token, expires_at, quantity }
+    Note over A: available_units >= quantity → право выдано немедленно,<br/>экран ожидания не отображается
 
     A->>QS: GET /queue/{product_id}/members/me (Upgrade: websocket)
-    Note over A: Открывает realtime-канал сразу — он понадобится позже,<br/>чтобы получить асинхронное подтверждение оплаты
+    Note over A: Канал открывается сразу — он необходим позже,<br/>чтобы получить асинхронное подтверждение оплаты
 
     A->>QS: GET /rights/{token}
     QS-->>A: 200 { valid: true }
-    Note over A: Проверка права выполняется на стороне QS до обращения к AvitoBackend —<br/>невалидные попытки не долетают до эндпоинта создания заказа
+    Note over A: Проверка выполняется на стороне QS до обращения к AvitoBackend —<br/>недействительные попытки не достигают конечной точки оформления заказа
 
-    A->>AB: create order (token передан, вне скоупа)
-    AB-->>A: форма оплаты
-    A->>AB: оплата
+    A->>AB: Создание заказа (право предъявлено, вне скоупа)
+    AB-->>A: Форма оплаты
+    A->>AB: Оплата
     AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-    QS->>QS: right(A) = USED
+    QS->>QS: Транзакция PostgreSQL: right(A) = USED, product_count -= quantity
     QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }
     QS-->>AB: 202 Accepted
-    QS-->>A: WS push { status: PURCHASED }
+    QS-->>A: WS: { status: PURCHASED }
 ```
 
 ---
 
-## Сценарий 2 — гонка, второй покупатель получает право и покупает
+## Сценарий 2 — состязание, право переходит второму покупателю
 
-Товар с одним свободным слотом (`total_stock = 1`) в момент конфликта. A первым получает право, но бездействует до истечения таймера; право переходит к B по FIFO, и B успевает оплатить.
+Товар с единственной свободной единицей. Покупатель A получает право первым, но бездействует до истечения срока; право переходит покупателю B в порядке FIFO, и B завершает оплату.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant A as Покупатель A (браузер)
     participant B as Покупатель B (браузер)
-    participant QS as Queue Service (наш backend)
+    participant QS as Queue Service
     participant AB as AvitoBackend (внешний, вне скоупа)
 
     A->>QS: POST /queue/{product_id}/members
-    QS-->>A: 201 { status: RIGHT_ACTIVE, token, expires_at }
-    Note over A: available_units был > 0 → право выдано мгновенно,<br/>экран ожидания пропущен, сразу переход к оформлению
+    QS-->>A: 201 { status: RIGHT_ACTIVE, token, expires_at, quantity }
+    Note over A: available_units был больше нуля → право выдано немедленно,<br/>экран ожидания пропущен
 
     A->>QS: GET /queue/{product_id}/members/me (Upgrade: websocket)
-    Note over A: Открывает realtime-канал сразу — понадобится,<br/>чтобы узнать об истечении своего права или об успешной оплате
+    Note over A: Канал необходим, чтобы узнать об истечении срока<br/>собственного права либо об успешной оплате
 
     B->>QS: POST /queue/{product_id}/members
-    QS-->>B: 201 { status: QUEUED }
+    QS-->>B: 201 { status: QUEUED, quantity }
     B->>QS: GET /queue/{product_id}/members/me (Upgrade: websocket)
-    Note over B: available_units стал 0 → B встаёт в очередь,<br/>видит экран ожидания. Текст сообщения формирует фронтенд по status, не backend
+    QS-->>B: WS: { status: QUEUED, position: 1, eta_seconds }
+    Note over B: available_units стал равен нулю → B помещён в очередь.<br/>Текст сообщения формирует клиентское приложение по состоянию
 
     opt Демонстрация: попытка обхода очереди
-        B->>QS: GET /rights/{token_A} (пробует обойти очередь чужим токеном)
+        B->>QS: GET /rights/{token_A}
         QS-->>B: 403 Forbidden
-        Note over QS: Токен принадлежит A, а не B — Queue Service отклоняет проверку<br/>напрямую, до какого-либо обращения к AvitoBackend
+        Note over QS: Право принадлежит A — QS отклоняет проверку<br/>до какого-либо обращения к AvitoBackend
     end
 
-    alt A успевает оформить и оплатить заказ до истечения таймера
-        Note over A: См. Сценарий 1 — здесь этот путь не происходит
-    else A бездействует до истечения таймера (этот сценарий)
-        Note over A: A бездействует и не завершает оформление
+    alt A завершает оформление и оплату до истечения срока
+        Note over A: См. сценарий 1 — данный путь здесь не реализуется
+    else A бездействует до истечения срока (рассматриваемый сценарий)
+        Note over A: A не завершает оформление
 
-        QS->>QS: right(A).expires_at достигнут → right(A) = EXPIRED
-        QS-->>A: WS push { status: QUEUED }
-        Note over QS: Слот освободился → выдаём право следующему в FIFO (B)
+        QS->>QS: Достигнут expires_at → транзакция PostgreSQL:<br/>right(A) = EXPIRED, membership(A) = DECLINED
+        QS-->>A: WS: { status: DECLINED }
+        Note over A: Состояние терминально — соединение закрывается сервером.<br/>Для новой попытки требуется повторный вход в очередь
 
-        QS-->>B: WS push { status: RIGHT_ACTIVE, token, expires_at }
-        Note over B: Экран меняется на «Ваша очередь», таймер запущен,<br/>кнопка оформления разблокирована
+        Note over QS: Единица возвращена в пул → продвижение очереди FIFO
+        QS-->>B: WS: { status: RIGHT_ACTIVE, token, expires_at, quantity }
+        Note over B: Экран сменяется, отсчёт запущен,<br/>переход к оформлению разблокирован
     end
+
+    Note over QS,B: Аналогичный переход наступает досрочно, если B закрывает вкладку:<br/>без подтверждения присутствия в течение RIGHT_HEARTBEAT_TIMEOUT<br/>право освобождается, не дожидаясь исчерпания RIGHT_TTL
 
     B->>QS: GET /rights/{token}
     QS-->>B: 200 { valid: true }
 
-    B->>AB: create order (token передан, вне скоупа)
-    AB-->>B: форма оплаты
-    B->>AB: оплата
+    B->>AB: Создание заказа (право предъявлено, вне скоупа)
+    AB-->>B: Форма оплаты
+    B->>AB: Оплата
     AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-    QS->>QS: right(B) = USED
+    QS->>QS: Транзакция PostgreSQL: right(B) = USED, product_count -= quantity
     QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }
     QS-->>AB: 202 Accepted
-    QS-->>B: WS push { status: PURCHASED }
-    Note over QS: Если это была последняя единица и очередь пуста —<br/>товар помечается SOLD_OUT для новых покупателей
+    QS-->>B: WS: { status: PURCHASED }
+    Note over QS: Остаток исчерпан → входящие в очередь получают SOLD_OUT
 ```
 
 ---
 
-## Сценарий 3 — гонка, опоздавшие получают SOLD_OUT
+## Сценарий 3 — состязание, опоздавшие получают SOLD_OUT
 
-Тот же товар с `total_stock = 1`. A получает право первым и сразу оплачивает — быстрее, чем истекает таймер. B и C встают в очередь следом за A и никогда не получат право, потому что единица уже продана.
+Тот же товар с единственной свободной единицей. Покупатель A получает право первым и завершает оплату до истечения срока. Покупатели B и C помещены в очередь следом и права не получат, поскольку единица продана.
 
 ```mermaid
 sequenceDiagram
@@ -113,47 +123,46 @@ sequenceDiagram
     participant A as Покупатель A (браузер)
     participant B as Покупатель B (браузер)
     participant C as Покупатель C (браузер)
-    participant QS as Queue Service (наш backend)
+    participant QS as Queue Service
     participant AB as AvitoBackend (внешний, вне скоупа)
 
     A->>QS: POST /queue/{product_id}/members
-    QS-->>A: 201 { status: RIGHT_ACTIVE, token, expires_at }
-    Note over A: available_units был 1 → становится 0, право выдано мгновенно
+    QS-->>A: 201 { status: RIGHT_ACTIVE, token, expires_at, quantity }
+    Note over A: available_units был равен 1 → становится 0, право выдано немедленно
 
     A->>QS: GET /queue/{product_id}/members/me (Upgrade: websocket)
-    Note over A: Открывает realtime-канал сразу — понадобится для<br/>асинхронного подтверждения оплаты
 
     B->>QS: POST /queue/{product_id}/members
-    QS-->>B: 201 { status: QUEUED }
+    QS-->>B: 201 { status: QUEUED, quantity }
     B->>QS: GET /queue/{product_id}/members/me (Upgrade: websocket)
 
     C->>QS: POST /queue/{product_id}/members
-    QS-->>C: 201 { status: QUEUED }
+    QS-->>C: 201 { status: QUEUED, quantity }
     C->>QS: GET /queue/{product_id}/members/me (Upgrade: websocket)
-    Note over QS: FIFO-порядок: B — первый в очереди, C — второй
+    Note over QS: Порядок FIFO: B — первый в очереди, C — второй
 
-    alt A успевает оплатить до истечения таймера (этот сценарий)
+    alt A завершает оплату до истечения срока (рассматриваемый сценарий)
         A->>QS: GET /rights/{token}
         QS-->>A: 200 { valid: true }
 
-        A->>AB: create order (token передан, вне скоупа)
-        AB-->>A: форма оплаты
-        A->>AB: оплата (успевает до истечения таймера)
+        A->>AB: Создание заказа (право предъявлено, вне скоупа)
+        AB-->>A: Форма оплаты
+        A->>AB: Оплата
         AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-        QS->>QS: right(A) = USED, product_count = 0
+        QS->>QS: Транзакция PostgreSQL: right(A) = USED, product_count = 0
         QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }
         QS-->>AB: 202 Accepted
-        QS-->>A: WS push { status: PURCHASED }
-        Note over QS: product_count == 0 и активных прав больше нет →<br/>товар SOLD_OUT для всех, кто ещё в очереди
-    else A бездействует / не успевает
-        Note over A: См. Сценарий 2 — здесь этот путь не происходит
+        QS-->>A: WS: { status: PURCHASED }
+        Note over QS: Продвижение очереди при нулевом остатке →<br/>ожидающие переводятся в терминальное SOLD_OUT
+    else A бездействует либо не успевает
+        Note over A: См. сценарий 2 — данный путь здесь не реализуется
     end
 
     par
-        QS-->>B: WS push { status: SOLD_OUT }
+        QS-->>B: WS: { status: SOLD_OUT }
     and
-        QS-->>C: WS push { status: SOLD_OUT }
+        QS-->>C: WS: { status: SOLD_OUT }
     end
 ```
 
@@ -161,7 +170,7 @@ sequenceDiagram
 
 ## Сценарий 4 — несколько единиц товара, частичное предложение и отказ
 
-Товар с `total_stock = 4`. A берёт 1 штуку сразу и полностью завершает покупку (create order → оплата → `payment_succeeded`) до того, как B входит в очередь — именно поэтому к моменту входа B доступно уже 3, а не 4. B хочет 5, но доступно только 3 — получает предложение (`OFFER_PENDING`) сразу при входе (очередь для него пуста) и соглашается на 2. C хочет 2, встаёт в очередь, т.к. на момент его входа всё оставшееся удержано за B; когда B оплачивает, остаётся только 1 единица — C получает предложение уже на неё и отказывается, оставляя эту единицу непроданной.
+Товар с остатком в четыре единицы. Покупатель A приобретает одну единицу и полностью завершает покупку до входа покупателя B, вследствие чего к моменту входа B доступно три единицы. Покупатель B запрашивает пять, получает частичное предложение на три и принимает две. Покупатель C запрашивает две и помещается в очередь, поскольку на момент его входа всё доступное количество удержано за B; возвращённая при частичном принятии единица немедленно направляется C в виде нового предложения, от которого C отказывается. Одна единица остаётся нераспроданной, что является допустимым исходом.
 
 ```mermaid
 sequenceDiagram
@@ -169,80 +178,80 @@ sequenceDiagram
     participant A as Покупатель A (браузер)
     participant B as Покупатель B (браузер)
     participant C as Покупатель C (браузер)
-    participant QS as Queue Service (наш backend)
+    participant QS as Queue Service
     participant AB as AvitoBackend (внешний, вне скоупа)
 
+    A->>QS: POST /queue/{product_id}/members { quantity: 1 }
     QS->>AB: GET /products/{product_id}/stock
     AB-->>QS: { available: 4 }
-    Note over QS: Единоразовая инициализация локального состояния QS для товара —<br/>дальше QS ведёт available_units/product_count как кэш этого значения
+    Note over QS: Локальное состояние товара отсутствовало → значение принимается<br/>как исходное, далее QS ведёт product_count и available_units самостоятельно
 
-    A->>QS: POST /queue/{product_id}/members { quantity: 1 }
     QS-->>A: 201 { status: RIGHT_ACTIVE, token, expires_at, quantity: 1 }
-    Note over A: available_units = 3 сразу после выдачи права A (ещё не оплачен)
+    Note over QS: available_units = 3 сразу после выдачи права A,<br/>product_count = 4 до подтверждения оплаты
 
     A->>QS: GET /queue/{product_id}/members/me (Upgrade: websocket)
 
     A->>QS: GET /rights/{token}
     QS-->>A: 200 { valid: true }
 
-    A->>AB: create order (token передан, вне скоупа)
-    AB-->>A: форма оплаты
-    A->>AB: оплата
+    A->>AB: Создание заказа (право предъявлено, вне скоупа)
+    AB-->>A: Форма оплаты
+    A->>AB: Оплата
     AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-    QS->>QS: right(A) = USED
+    QS->>QS: Транзакция PostgreSQL: right(A) = USED, product_count = 3
     QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }
     QS-->>AB: 202 Accepted
-    QS-->>A: WS push { status: PURCHASED }
-    Note over QS: A полностью завершил покупку до входа B — available_units остаётся 3.<br/>Это и объясняет, почему B ниже получит OFFER_PENDING вместо RIGHT_ACTIVE на 5 единиц
+    QS-->>A: WS: { status: PURCHASED }
+    Note over QS: A завершил покупку до входа B — available_units остаётся равным 3.<br/>Это объясняет, почему B получит предложение, а не полное право на 5 единиц
 
     B->>QS: POST /queue/{product_id}/members { quantity: 5 }
-    QS-->>B: 201 { status: OFFER_PENDING, available_quantity: 3, expires_at }
-    Note over B: Очередь для B пуста, но доступно (3) меньше запрошенного (5) →<br/>предложение выдаётся сразу, а не после ожидания
+    QS-->>B: 201 { status: OFFER_PENDING, quantity: 5, available_quantity: 3, expires_at }
+    Note over B: Доступно (3) меньше запрошенного (5) →<br/>предложение выдаётся немедленно, ожидание не требуется
 
     B->>QS: GET /queue/{product_id}/members/me (Upgrade: websocket)
 
     C->>QS: POST /queue/{product_id}/members { quantity: 2 }
-    QS-->>C: 201 { status: QUEUED }
-    Note over QS: Все 3 доступные единицы временно удержаны за B до его решения — C ждёт
+    QS-->>C: 201 { status: QUEUED, quantity: 2 }
+    Note over QS: available_units = 0: все три единицы удержаны за B<br/>до принятия им решения → C помещён в очередь
 
     C->>QS: GET /queue/{product_id}/members/me (Upgrade: websocket)
+    QS-->>C: WS: { status: QUEUED, position: 1, eta_seconds }
 
-    alt B соглашается на меньшее количество (этот сценарий)
-        Note over B: B решает купить меньше, чем предложено — 2 из 3
+    alt B принимает меньшее количество (рассматриваемый сценарий)
+        Note over B: B принимает 2 единицы из 3 предложенных
 
         B->>QS: PATCH /queue/{product_id}/members/me { quantity: 2 }
         QS-->>B: 200 { status: RIGHT_ACTIVE, token, expires_at, quantity: 2 }
-        Note over QS: 1 неиспользованная единица из удержанных B возвращается в пул,<br/>но этого пока недостаточно для полного запроса C (2) — очередь не продвигается
+
+        Note over QS: Неиспользованная единица немедленно возвращается в пул,<br/>после чего выполняется продвижение очереди
+        QS-->>C: WS: { status: OFFER_PENDING, quantity: 2, available_quantity: 1, expires_at }
+        Note over C: Доступно (1) меньше запрошенного (2) → предложение, а не полное право.<br/>Отсчёт для C начинается здесь, не дожидаясь оплаты B
 
         B->>QS: GET /rights/{token}
         QS-->>B: 200 { valid: true }
 
-        B->>AB: create order (token передан, вне скоупа)
-        AB-->>B: форма оплаты
-        B->>AB: оплата
+        B->>AB: Создание заказа (право предъявлено, вне скоупа)
+        AB-->>B: Форма оплаты
+        B->>AB: Оплата
         AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-        QS->>QS: right(B) = USED
+        QS->>QS: Транзакция PostgreSQL: right(B) = USED, product_count = 1
         QS->>AB: PATCH /products/{product_id}/stock { decrement: 2 }
         QS-->>AB: 202 Accepted
-        QS-->>B: WS push { status: PURCHASED }
-        Note over QS: Остался 1 экземпляр, впереди в очереди — C (просил 2)
+        QS-->>B: WS: { status: PURCHASED }
     else B отказывается полностью
-        Note over B: См. отказ C ниже — механика та же (DELETE → WS push DECLINED),<br/>токен не выдан, заказ не создаётся
+        Note over B: Механика совпадает с отказом C ниже: DELETE → DECLINED,<br/>право не выдаётся, заказ не создаётся, все три единицы возвращаются в пул
     end
 
-    QS-->>C: WS push { status: OFFER_PENDING, available_quantity: 1, expires_at }
-    Note over C: Доступно (1) меньше запрошенного (2) — снова предложение, а не полное право
-
-    alt C отказывается от предложения (этот сценарий)
-        Note over C: C решает, что 1 книга ей не подходит, отказывается
+    alt C отказывается от предложения (рассматриваемый сценарий)
+        Note over C: C отклоняет предложение на одну единицу
 
         C->>QS: DELETE /queue/{product_id}/members/me
         QS-->>C: 204 No Content
-        QS-->>C: WS push { status: DECLINED }
-        Note over QS: Очередь пуста, 1 единица остаётся нераспроданной — сценарий завершён
-    else C соглашается на меньшее количество
-        Note over C: См. принятие B выше — механика та же (PATCH → RIGHT_ACTIVE)
+        QS-->>C: WS: { status: DECLINED }
+        Note over QS: Единица возвращена в пул, очередь пуста →<br/>product_count = 1 остаётся нераспроданным, сценарий завершён
+    else C принимает меньшее количество
+        Note over C: Механика совпадает с принятием B выше: PATCH → RIGHT_ACTIVE
     end
 ```

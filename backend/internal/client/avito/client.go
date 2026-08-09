@@ -1,7 +1,7 @@
 // Package avito is the HTTP client for AvitoBackend, the external system that
 // owns the physical stock. Queue Service only mirrors that number locally, so
 // this client is the single place where the two systems agree on it
-// (docs/design_context.md, пп. 7 и 7.1).
+// (docs/design_context.md, пп. 8 и 9).
 package avito
 
 import (
@@ -16,7 +16,8 @@ import (
 
 // InternalTokenHeader authorises service-to-service calls. AvitoBackend is not a
 // browser and has no session, so a shared secret is the whole mechanism — this
-// closes открытый вопрос №4 from docs/design_context.md for the MVP.
+// closes the service-to-service authorisation question for the MVP
+// (docs/design_context.md, раздел 13).
 const InternalTokenHeader = "X-Internal-Token" //nolint:gosec // header name, not a credential
 
 const defaultTimeout = 5 * time.Second

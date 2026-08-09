@@ -6,7 +6,7 @@ import (
 )
 
 // UserHeader carries the caller identity. Real authentication is out of the case
-// scope (requirements.md, FR-D1): the frontend just sends whichever user it acts
+// scope (docs/requirements.md, FR-D1): the frontend just sends whichever user it acts
 // as, which is also what makes two-buyer races testable by hand.
 const UserHeader = "X-User-Id"
 

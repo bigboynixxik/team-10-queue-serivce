@@ -4,7 +4,7 @@ import "time"
 
 // Status is the machine-readable state of a queue membership, as exposed by the API.
 // Internal states (EXPIRED, USED) are not statuses: expiry shows up as QUEUED or
-// DECLINED, a used right shows up as PURCHASED (see docs/design_context.md, п.4 и п.7).
+// DECLINED, a used right shows up as PURCHASED (see docs/design_context.md, п. 6).
 type Status string
 
 const (

@@ -143,7 +143,7 @@ func applyMigrations(pool *pgxpool.Pool) error {
 
 // runExpirationWorker is what makes an unused right come back to the queue: the
 // state machine only moves on a request or on a timer, and this is the timer
-// (docs/design_context.md, п. 4).
+// (docs/design_context.md, п. 5.5).
 func runExpirationWorker(ctx context.Context, svc *service.QueueService, interval time.Duration, log *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

@@ -618,7 +618,7 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 		}
 
 		// AvitoBackend owns the physical stock, so the sale is not real until it knows
-		// (docs/design_context.md, п. 7). A failure here must not fail the payment:
+		// (docs/design_context.md, п. 8). A failure here must not fail the payment:
 		// the money is already taken and our own state is committed, so the only sane
 		// reaction is to log and let reconciliation deal with it.
 		if errStock := s.avito.DecrementStock(ctx, right.ProductID, right.Quantity); errStock != nil {
