@@ -1,6 +1,7 @@
+import { useMutation } from '@tanstack/react-query';
+
 import { rightsMutations } from '@entities/queue';
 import { useErrorNotifier } from '@shared/lib';
-import { useMutation } from '@tanstack/react-query';
 
 import { buildCheckoutUrl } from './buildCheckoutUrl';
 

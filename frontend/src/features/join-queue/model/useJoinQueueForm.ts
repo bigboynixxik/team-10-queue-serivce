@@ -1,9 +1,10 @@
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+
 import type { Product } from '@entities/product';
 import { queueQueries } from '@entities/queue';
 import type { Nullable } from '@shared/model';
-import { useQuery } from '@tanstack/react-query';
 import { useToast } from '@ui';
-import { useState } from 'react';
 
 import { useJoinQueue } from './useJoinQueue';
 

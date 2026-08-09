@@ -1,5 +1,6 @@
-import type { UserQueue } from '@entities/queue';
 import { describe, expect, test } from '@rstest/core';
+
+import type { UserQueue } from '@entities/queue';
 
 import { describeUserQueuesUpdate } from './describeUserQueuesUpdate';
 

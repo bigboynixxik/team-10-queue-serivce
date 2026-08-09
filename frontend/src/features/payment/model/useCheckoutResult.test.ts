@@ -1,7 +1,7 @@
-import { queueQueries } from '@entities/queue';
 import { afterEach, beforeEach, describe, expect, rs, test } from '@rstest/core';
 import type { QueryClient } from '@tanstack/react-query';
 
+import { queueQueries } from '@entities/queue';
 import { createTestQueryClient, renderHookWithProviders } from '@test/render';
 
 rs.mock('@shared/config', () => ({

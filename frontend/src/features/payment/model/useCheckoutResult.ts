@@ -1,7 +1,8 @@
-import { queueQueries } from '@entities/queue';
-import { CHECKOUT_BASE_URL } from '@shared/config';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
+
+import { queueQueries } from '@entities/queue';
+import { CHECKOUT_BASE_URL } from '@shared/config';
 
 import { isPaymentSucceeded } from './isPaymentSucceeded';
 

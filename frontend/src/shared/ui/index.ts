@@ -9,4 +9,5 @@ export { QuantityStepper } from './quantity-stepper/QuantityStepper';
 export { Spinner } from './spinner/Spinner';
 export { Stack } from './stack/Stack';
 export { Tag } from './tag/Tag';
-export { ToastProvider, useToast } from './toast/ToastProvider';
+export { ToastProvider } from './toast/ToastProvider';
+export { useToast } from './toast/useToast';

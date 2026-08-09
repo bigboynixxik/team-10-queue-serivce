@@ -1,9 +1,10 @@
+import type { ReactNode } from 'react';
+
 import type { Product } from '@entities/product';
 import { cn } from '@shared/lib';
 import { Alert, Spinner } from '@ui';
-import type { ReactNode } from 'react';
-import { useProductList } from '../model/useProductList';
 
+import { useProductList } from '../model/useProductList';
 import styles from './ProductList.module.css';
 
 const bem = cn('ProductList');

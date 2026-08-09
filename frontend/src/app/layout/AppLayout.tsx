@@ -1,8 +1,9 @@
+import { Outlet } from 'react-router-dom';
+
 import { useUserStore } from '@entities/user';
 import { useMyQueuesLiveUpdates } from '@features/my-queues';
 import { cn } from '@shared/lib';
 import { Header } from '@widgets/header';
-import { Outlet } from 'react-router-dom';
 
 import styles from './AppLayout.module.css';
 

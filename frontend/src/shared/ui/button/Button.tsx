@@ -1,5 +1,6 @@
-import { cn } from '@shared/lib';
 import type { ButtonHTMLAttributes, PropsWithChildren } from 'react';
+
+import { cn } from '@shared/lib';
 
 import styles from './Button.module.css';
 

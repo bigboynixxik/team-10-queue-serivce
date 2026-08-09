@@ -1,6 +1,7 @@
-import { productQueries } from '@entities/product';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
+
+import { productQueries } from '@entities/product';
 
 export const useOrderInfoPage = () => {
   const { productId = '' } = useParams();

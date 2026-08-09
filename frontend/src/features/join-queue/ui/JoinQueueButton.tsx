@@ -1,5 +1,6 @@
-import { Button } from '@ui';
 import type { MouseEvent } from 'react';
+
+import { Button } from '@ui';
 
 type Props = {
   onJoin: () => void;

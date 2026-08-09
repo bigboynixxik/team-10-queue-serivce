@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, rs, test } from '@rstest/core';
-import { createTestQueryClient, renderHookWithProviders } from '@test/render';
 import { act } from '@testing-library/react';
+
+import { createTestQueryClient, renderHookWithProviders } from '@test/render';
 
 type Listeners = {
   onMembership: (membership: { status: string }) => void;

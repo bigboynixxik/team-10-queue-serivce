@@ -1,6 +1,7 @@
+import { Link } from 'react-router-dom';
+
 import { appPath } from '@shared/config';
 import { cn } from '@shared/lib';
-import { Link } from 'react-router-dom';
 
 import styles from './PaymentSuccessPage.module.css';
 

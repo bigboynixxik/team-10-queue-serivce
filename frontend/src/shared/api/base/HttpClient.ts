@@ -1,10 +1,11 @@
-import { API_BASE_URL, USER_ID_STORAGE_KEY } from '@shared/config';
 import axios, {
   type AxiosError,
   type AxiosInstance,
   type AxiosRequestConfig,
   type AxiosResponse,
 } from 'axios';
+
+import { API_BASE_URL, USER_ID_STORAGE_KEY } from '@shared/config';
 
 import BadRequest from './error/BadRequest';
 import { getApiErrorMessages } from './error/get-api-error-messages';

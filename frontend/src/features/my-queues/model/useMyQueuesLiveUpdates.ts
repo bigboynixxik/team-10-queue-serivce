@@ -1,8 +1,9 @@
+import { useQuery } from '@tanstack/react-query';
+import { useCallback, useRef } from 'react';
+
 import { productQueries } from '@entities/product';
 import { type UserQueue, useUserQueuesLiveUpdates } from '@entities/queue';
-import { useQuery } from '@tanstack/react-query';
 import { useToast } from '@ui';
-import { useCallback, useRef } from 'react';
 
 import { describeUserQueuesUpdate } from './describeUserQueuesUpdate';
 

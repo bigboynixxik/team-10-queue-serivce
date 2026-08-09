@@ -1,5 +1,6 @@
-import { queryClient } from '@shared/lib';
 import { mutationOptions } from '@tanstack/react-query';
+
+import { queryClient } from '@shared/lib';
 
 import { queueApi } from '../api/QueueApi';
 import type { AcceptOfferPayload, JoinPayload } from '../api/type';

@@ -7,7 +7,58 @@
     "enabled": true,
     "actions": {
       "source": {
-        "organizeImports": "on"
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "groups": [
+              [":BUN:", ":NODE:", ":PACKAGE_WITH_PROTOCOL:", ":URL:"],
+              ":BLANK_LINE:",
+              [
+                ":PACKAGE:",
+                "!@app",
+                "!@app/**",
+                "!@pages",
+                "!@pages/**",
+                "!@widgets",
+                "!@widgets/**",
+                "!@features",
+                "!@features/**",
+                "!@entities",
+                "!@entities/**",
+                "!@shared",
+                "!@shared/**",
+                "!@ui",
+                "!@ui/**",
+                "!@test",
+                "!@test/**",
+                "!@/**"
+              ],
+              ":BLANK_LINE:",
+              [
+                "@app",
+                "@app/**",
+                "@pages",
+                "@pages/**",
+                "@widgets",
+                "@widgets/**",
+                "@features",
+                "@features/**",
+                "@entities",
+                "@entities/**",
+                "@shared",
+                "@shared/**",
+                "@ui",
+                "@ui/**",
+                "@test",
+                "@test/**",
+                "@/**",
+                ":ALIAS:"
+              ],
+              ":BLANK_LINE:",
+              ":PATH:"
+            ]
+          }
+        }
       }
     }
   },

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, rs, test } from '@rstest/core';
+import { act, renderHook } from '@testing-library/react';
+
 import { USER_ID_STORAGE_KEY } from '@shared/config';
 import { resetAllStores } from '@shared/model';
-import { act, renderHook } from '@testing-library/react';
 
 rs.mock('./utils', () => ({
   createUserId: () => 'initial-user',

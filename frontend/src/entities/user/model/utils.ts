@@ -1,4 +1,4 @@
-import { USER_ID_STORAGE_KEY } from '@/shared/config';
+import { USER_ID_STORAGE_KEY } from '@shared/config';
 
 export const createUserId = () => {
   const stored = localStorage.getItem(USER_ID_STORAGE_KEY);

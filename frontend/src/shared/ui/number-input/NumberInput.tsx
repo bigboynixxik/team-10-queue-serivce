@@ -1,5 +1,6 @@
-import { cn } from '@shared/lib';
 import type { InputHTMLAttributes } from 'react';
+
+import { cn } from '@shared/lib';
 
 import styles from './NumberInput.module.css';
 

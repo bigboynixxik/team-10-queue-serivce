@@ -1,5 +1,6 @@
-import { cn } from '@shared/lib';
 import type { PropsWithChildren, ReactNode } from 'react';
+
+import { cn } from '@shared/lib';
 
 import styles from './Card.module.css';
 

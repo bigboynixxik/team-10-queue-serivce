@@ -1,7 +1,8 @@
-import type { Product } from '@entities/product';
 import { beforeEach, describe, expect, rs, test } from '@rstest/core';
 import * as reactQuery from '@tanstack/react-query' with { rstest: 'importActual' };
 import { act, renderHook } from '@testing-library/react';
+
+import type { Product } from '@entities/product';
 
 const join = rs.fn();
 const toastError = rs.fn();

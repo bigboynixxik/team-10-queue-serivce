@@ -1,6 +1,7 @@
 import { cn } from '@shared/lib';
 import { Alert, Button } from '@ui';
 
+import { describeShortage } from '../lib/describeShortage';
 import { useOfferActions } from '../model/useOfferActions';
 import styles from './OfferActions.module.css';
 
@@ -11,11 +12,6 @@ type Props = {
   availableQuantity: number;
   requestedQuantity?: number;
 };
-
-const describeShortage = (availableQuantity: number, requestedQuantity?: number): string =>
-  requestedQuantity === undefined
-    ? `Осталось только ${availableQuantity} шт.`
-    : `Вы выбрали ${requestedQuantity} шт., а осталось только ${availableQuantity} шт.`;
 
 export const OfferActions = ({
   productId,

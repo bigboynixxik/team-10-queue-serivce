@@ -1,9 +1,10 @@
+import { useNavigate } from 'react-router-dom';
+
 import { appPath } from '@shared/config';
 import { cn } from '@shared/lib';
 import { Alert, Button, Spinner } from '@ui';
 import { OrderQueueCta } from '@widgets/order-queue-cta';
 import { ProductCatalog } from '@widgets/product-catalog';
-import { useNavigate } from 'react-router-dom';
 
 import { useOrderInfoPage } from '../model/useOrderInfoPage';
 import styles from './OrderInfoPage.module.css';

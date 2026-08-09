@@ -1,6 +1,7 @@
-import { API_BASE_URL } from '@shared/config';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
+
+import { API_BASE_URL } from '@shared/config';
 
 import { type Membership, type UserQueue, UserQueuesSchema } from '../api/type';
 import { queueMembershipQueryKey, userQueuesQueryKey } from './queries';

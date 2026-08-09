@@ -1,7 +1,8 @@
-import { AppLayout } from '@app/layout/AppLayout';
-import { APP_BASENAME, appPath } from '@shared/config';
 import { lazy } from 'react';
 import { createBrowserRouter, redirect } from 'react-router-dom';
+
+import { AppLayout } from '@app/layout/AppLayout';
+import { APP_BASENAME, appPath } from '@shared/config';
 
 const HomePage = lazy(() => import('@pages/home').then(({ HomePage }) => ({ default: HomePage })));
 

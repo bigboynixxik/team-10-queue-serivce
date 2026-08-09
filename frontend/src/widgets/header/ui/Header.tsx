@@ -1,6 +1,6 @@
 import { MyQueuesMenu } from '@features/my-queues';
 import { cn } from '@shared/lib';
-import { avitoLogo } from '@shared/ui';
+import { avitoLogo } from '@ui';
 
 import styles from './Header.module.css';
 

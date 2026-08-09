@@ -1,6 +1,7 @@
-import type { UserQueue } from '@entities/queue';
 import { beforeEach, describe, expect, rs, test } from '@rstest/core';
 import { act, renderHook } from '@testing-library/react';
+
+import type { UserQueue } from '@entities/queue';
 
 const info = rs.fn();
 let onUpdate: ((queues: UserQueue[]) => void) | undefined;

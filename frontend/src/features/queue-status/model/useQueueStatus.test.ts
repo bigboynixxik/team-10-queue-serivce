@@ -1,7 +1,8 @@
-import type { Membership } from '@entities/queue';
 import { afterEach, beforeEach, describe, expect, rs, test } from '@rstest/core';
 import * as reactQuery from '@tanstack/react-query' with { rstest: 'importActual' };
 import { act, renderHook } from '@testing-library/react';
+
+import type { Membership } from '@entities/queue';
 
 let membership: Membership | undefined;
 

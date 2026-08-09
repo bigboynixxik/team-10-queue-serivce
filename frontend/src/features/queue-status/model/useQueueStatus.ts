@@ -1,8 +1,9 @@
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+
 import { type Membership, queueQueries, useMembershipLiveUpdates } from '@entities/queue';
 import { useUserStore } from '@entities/user';
 import type { Nullable } from '@shared/model';
-import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
 
 import { membershipRefetchInterval } from './membershipRefetchInterval';
 import { secondsToExpiry } from './secondsToExpiry';

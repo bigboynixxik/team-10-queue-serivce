@@ -1,11 +1,8 @@
 import type { Product } from '@entities/product';
-import { queueQueries } from '@entities/queue';
-import { appPath } from '@shared/config';
 import { cn } from '@shared/lib';
-import { useQuery } from '@tanstack/react-query';
 import { Card } from '@ui';
-import { useNavigate } from 'react-router-dom';
 
+import { useJoinQueueProductCard } from '../model/useJoinQueueProductCard';
 import styles from './JoinQueueProductCard.module.css';
 
 const bem = cn('JoinQueueProductCard');
@@ -15,15 +12,13 @@ type Props = {
 };
 
 export const JoinQueueProductCard = ({ product }: Props): React.JSX.Element => {
-  const navigate = useNavigate();
-  const { data: membership } = useQuery(queueQueries.me(product.id));
-  const isQueued = membership?.status === 'QUEUED';
+  const { isQueued, openProduct } = useJoinQueueProductCard(product);
 
   return (
     <Card
       cover={<img alt={product.title} src={product.image} />}
       description={product.description}
-      onClick={() => navigate(appPath(`/order-info/${product.id}`))}
+      onClick={openProduct}
       title={product.title}
     >
       <p className={styles[bem('price')]}>{product.price.toLocaleString('ru-RU')} ₽</p>

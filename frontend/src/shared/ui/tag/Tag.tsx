@@ -1,5 +1,6 @@
-import { cn } from '@shared/lib';
 import type { PropsWithChildren } from 'react';
+
+import { cn } from '@shared/lib';
 
 import styles from './Tag.module.css';
 

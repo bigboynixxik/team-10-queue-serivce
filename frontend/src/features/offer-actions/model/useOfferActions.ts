@@ -1,6 +1,7 @@
+import { useMutation } from '@tanstack/react-query';
+
 import { type AcceptOfferPayload, queueMutations } from '@entities/queue';
 import { useErrorNotifier } from '@shared/lib';
-import { useMutation } from '@tanstack/react-query';
 
 export const useOfferActions = (productId: string) => {
   const notifyError = useErrorNotifier();
