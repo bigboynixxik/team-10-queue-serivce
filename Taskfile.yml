@@ -1,0 +1,115 @@
+version: "3"
+
+vars:
+  COMPOSE: docker compose
+  FRONTEND_PORT: '{{.FRONTEND_PORT | default "80"}}'
+  BACKEND_PORT: '{{.BACKEND_PORT | default "8080"}}'
+  AVITO_MOCK_PORT: '{{.AVITO_MOCK_PORT | default "9090"}}'
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  env:
+    desc: Create .env files from examples if missing
+    cmds:
+      - |
+        if [ ! -f backend/.env ]; then
+          cp backend/.env.example backend/.env
+          echo "created backend/.env"
+        else
+          echo "backend/.env already exists"
+        fi
+      - |
+        if [ ! -f frontend/.env ]; then
+          cp frontend/.env.example frontend/.env
+          echo "created frontend/.env"
+        else
+          echo "frontend/.env already exists"
+        fi
+
+  build:
+    desc: Build docker images
+    deps: [env]
+    cmds:
+      - "{{.COMPOSE}} build"
+
+  up:
+    desc: Build and start the full stack in Docker (detached)
+    deps: [env]
+    cmds:
+      - "{{.COMPOSE}} up -d --build"
+      - task: wait
+      - task: health
+
+  rmv:
+    desc: Remove all volumes
+    cmds:
+      - "{{.COMPOSE}} down -v"
+
+
+  down:
+    desc: Stop and remove containers
+    cmds:
+      - "{{.COMPOSE}} down"
+
+  restart:
+    desc: Restart the stack
+    cmds:
+      - task: down
+      - task: up
+
+  logs:
+    desc: Follow compose logs (optional SERVICE=backend)
+    cmds:
+      - "{{.COMPOSE}} logs -f {{.SERVICE}}"
+
+  ps:
+    desc: Show compose service status
+    cmds:
+      - "{{.COMPOSE}} ps"
+
+  wait:
+    desc: Wait until HTTP health endpoints respond
+    internal: true
+    cmds:
+      - |
+        wait_url() {
+          name="$1"
+          url="$2"
+          for i in $(seq 1 90); do
+            if curl -fsS "$url" >/dev/null 2>&1; then
+              echo "$name is ready ($url)"
+              return 0
+            fi
+            sleep 2
+          done
+          echo "Timed out waiting for $name ($url)"
+          {{.COMPOSE}} ps
+          {{.COMPOSE}} logs --tail=80 "$name" || true
+          return 1
+        }
+
+        wait_url backend "http://localhost:{{.BACKEND_PORT}}/healthz"
+        wait_url avitomock "http://localhost:{{.AVITO_MOCK_PORT}}/healthz"
+        wait_url frontend "http://localhost:{{.FRONTEND_PORT}}/"
+
+  health:
+    desc: Hit health endpoints for backend, avitomock and frontend
+    cmds:
+      - |
+        set -e
+        echo "Checking http://localhost:{{.BACKEND_PORT}}/healthz"
+        curl -fsS "http://localhost:{{.BACKEND_PORT}}/healthz"
+        echo
+        echo "Checking http://localhost:{{.AVITO_MOCK_PORT}}/healthz"
+        curl -fsS "http://localhost:{{.AVITO_MOCK_PORT}}/healthz"
+        echo
+        echo "Checking http://localhost:{{.FRONTEND_PORT}}/"
+        curl -fsS -o /dev/null -w "frontend HTTP %{http_code}\n" "http://localhost:{{.FRONTEND_PORT}}/"
+        echo "All services are healthy"
+        echo "  frontend:  http://localhost:{{.FRONTEND_PORT}}/"
+        echo "  backend:   http://localhost:{{.BACKEND_PORT}}/healthz"
+        echo "  avitomock: http://localhost:{{.AVITO_MOCK_PORT}}/healthz"

@@ -1,0 +1,11 @@
+.JoinQueueProductCard__price {
+  margin: 20px 0 14px;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.JoinQueueProductCard__queue-status {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}

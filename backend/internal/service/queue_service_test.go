@@ -40,6 +40,7 @@ func (s *QueueServiceTestSuite) SetupTest() {
 		2*time.Minute,
 		4*time.Minute,
 		75*time.Second,
+		30*time.Second,
 	)
 }
 
@@ -66,7 +67,15 @@ func (s *QueueServiceTestSuite) mockSyncCacheState(status models.MembershipStatu
 	}
 	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
 	if expectTimer {
-		s.mockCache.EXPECT().AddToExpiryTimer(s.ctx, "prod-1", "user-1", gomock.Any()).Return(nil)
+		var timerMatcher gomock.Matcher = gomock.Any()
+		if status == models.MembershipStatusRightActive {
+			earliest := time.Now().UTC().Add(29 * time.Second)
+			latest := time.Now().UTC().Add(31 * time.Second)
+			timerMatcher = gomock.Cond(func(deadline time.Time) bool {
+				return !deadline.Before(earliest) && !deadline.After(latest)
+			})
+		}
+		s.mockCache.EXPECT().AddToExpiryTimer(s.ctx, "prod-1", "user-1", timerMatcher).Return(nil)
 	}
 	s.mockCache.EXPECT().PublishEvent(s.ctx, "prod-1", "user-1", map[string]string{"status": string(status)}).Return(nil)
 }

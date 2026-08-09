@@ -24,9 +24,11 @@
       "@widgets/*": ["./src/widgets/*"],
       "@features/*": ["./src/features/*"],
       "@entities/*": ["./src/entities/*"],
-      "@shared/*": ["./src/shared/*"]
+      "@shared/*": ["./src/shared/*"],
+      "@ui": ["./src/shared/ui"],
+      "@test/*": ["./test/*"]
     }
   },
-  "include": ["src", "rsbuild.config.ts"],
+  "include": ["src", "test", "rsbuild.config.ts", "rstest.config.ts"],
   "exclude": ["dist", "node_modules"]
 }

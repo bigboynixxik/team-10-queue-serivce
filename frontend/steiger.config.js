@@ -12,4 +12,9 @@ export default defineConfig([
       'fsd/segments-by-purpose': 'off',
     },
   },
+  {
+    rules: {
+      'fsd/insignificant-slice': 'off',
+    },
+  },
 ]);

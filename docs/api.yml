@@ -7,9 +7,13 @@ info:
     из `docs/user_story.md`. Вызовы к внешнему AvitoBackend (создание заказа,
     оплата, данные о товаре/остатке) вне скоупа и не описаны.
 
-    Аутентификация везде подразумевается через существующий механизм
-    авторизации Авито (пользователь уже залогинен) — в спецификации опущена
-    для краткости.
+    Полноценная аутентификация вне скоупа кейса (`FR-D1`). В MVP пользователь
+    передаётся заголовком `X-User-Id`; для WebSocket, где браузер не может
+    выставить заголовок, поддержан query-параметр `?user_id=`. В продакшене
+    `user_id` брался бы из сессии, а не из запроса.
+
+    Служебные вызовы от AvitoBackend (`POST /rights/{token}/events`)
+    авторизуются общим секретом в заголовке `X-Internal-Token`.
 
     API спроектировано в REST-стиле: ресурсы — существительные (`members`,
     `rights`), действие определяется HTTP-методом, а не глаголом в пути.
@@ -24,11 +28,22 @@ info:
     невалидные попытки до того, как они туда доходят.
   version: "1.0.0"
 
+servers:
+  - url: /api/v1
+    description: >
+      Все эндпоинты живут под версионированным префиксом. `/healthz` —
+      единственное исключение: это инфраструктурная проверка, а не API, и она
+      не должна ломаться при переходе на следующую версию.
+
 tags:
   - name: queue
     description: Членство пользователя в очереди на товар
   - name: rights
     description: Выданные права на покупку
+  - name: stats
+    description: Публичные показатели спроса на товар
+  - name: me
+    description: Очереди текущего пользователя
 
 paths:
   /queue/{product_id}/members:
@@ -109,6 +124,70 @@ paths:
               example:
                 status: SOLD_OUT
 
+  /queue/{product_id}/stats:
+    get:
+      tags: [stats]
+      summary: Спрос на товар
+      description: >
+        Публичный эндпоинт: сколько людей ждёт товар, сколько уже в процессе
+        покупки и сколько единиц осталось.
+
+        Обслуживает две аудитории сразу. Продавцу показывает, оправдан ли
+        довоз: спрос виден числом, а не догадкой. Покупателю даёт понять, что
+        ждёт не он один — ожидание перестаёт выглядеть произвольным (`UR-1`).
+
+        Аутентификация не требуется намеренно: в ответе только счётчики, ни
+        одного идентификатора пользователя, поэтому защищать нечего.
+
+        Данные собираются из двух источников — счётчики по статусам из
+        Postgres, остаток из Redis, — поэтому под нагрузкой две половины ответа
+        могут разойтись на мгновение. Это допустимо: на результате ничего не
+        решается, а выдача права по-прежнему остаётся атомарной операцией в
+        Redis.
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Текущая картина спроса
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [waiting, holding_right, pending_offer, available, product_count]
+                properties:
+                  waiting:
+                    type: integer
+                    description: Стоят в очереди, ничего пока не выделено
+                  holding_right:
+                    type: integer
+                    description: Держат активное право на покупку
+                  pending_offer:
+                    type: integer
+                    description: Решают, согласиться ли на частичное предложение
+                  available:
+                    type: integer
+                    description: >
+                      Свободно для выдачи прямо сейчас. Меньше физического
+                      остатка: единицы, удерживаемые правами и предложениями,
+                      сюда не входят.
+                  product_count:
+                    type: integer
+                    description: Физический остаток, зеркало значения AvitoBackend
+              example:
+                waiting: 47
+                holding_right: 2
+                pending_offer: 1
+                available: 0
+                product_count: 3
+        '404':
+          description: >
+            Queue Service ничего не знает об этом товаре — очередь по нему
+            ни разу не запускалась.
+
   /queue/{product_id}/members/me:
     get:
       tags: [queue]
@@ -125,6 +204,25 @@ paths:
         сервер переключает соединение на WS и присылает то же тело ответа
         (см. схему ниже) при каждом изменении статуса, без необходимости
         повторного polling.
+
+
+        Кроме WebSocket поддержан SSE: запрос с `Accept: text/event-stream`
+        отдаёт тот же объект как поток событий `update`. Два транспорта
+        сосуществуют — добавление SSE ничего не ломает для уже подключённых
+        клиентов.
+
+
+        Пока пользователь в статусе `QUEUED`, ответ дополняется полями
+        `position` (позиция в очереди, с единицы) и `eta_seconds` (оценка
+        времени ожидания). В остальных статусах их нет: тот, кто уже держит
+        право, в очереди не стоит, и показывать ему место было бы враньём.
+
+
+        Пользователь в WS-режиме передаётся query-параметром `?user_id=`, а не
+        заголовком: браузерный `new WebSocket(url)` не умеет выставлять
+        заголовки, поэтому иначе realtime из браузера был бы недоступен в
+        принципе. Заголовок `X-User-Id` имеет приоритет, query используется
+        только при его отсутствии.
       x-websocket: true
       parameters:
         - $ref: '#/components/parameters/ProductId'
@@ -135,6 +233,14 @@ paths:
             type: string
             enum: [websocket]
           description: Наличие заголовка переключает соединение в realtime WS-режим.
+        - name: user_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Запасной способ передать пользователя — только для WebSocket, где
+            заголовок недоступен.
       responses:
         '200':
           description: >
@@ -165,7 +271,7 @@ paths:
                     available_quantity: 3
                     expires_at: "2026-08-03T12:20:00Z"
                 queued:
-                  summary: В очереди (в т.ч. после истечения таймера предыдущего права/предложения)
+                  summary: Ожидает выдачи права или предложения
                   value:
                     status: QUEUED
                 sold_out:
@@ -250,6 +356,80 @@ paths:
         '204':
           description: Членство завершено
 
+  /me/queues:
+    get:
+      tags: [me]
+      summary: Мои очереди
+      description: >
+        Все очереди, в которых состоит пользователь, с его позицией и оценкой
+        времени ожидания в каждой — экран «Мои очереди».
+
+        Один ресурс, два режима — так же, как `/members/me` обслуживает разовое
+        чтение и WebSocket. Обычный запрос отдаёт JSON-массив; запрос с
+        `Accept: text/event-stream` превращается в SSE-поток, который присылает
+        тот же массив при каждом изменении. `EventSource` проставляет этот
+        заголовок сам, поэтому фронтенду достаточно указать URL.
+
+        Названия товаров не отдаются намеренно: каталог принадлежит
+        AvitoBackend, и Queue Service его не дублирует — клиент сопоставляет
+        `product_id` с карточкой сам.
+
+        Терминальные членства (`PURCHASED`, `DECLINED`, `SOLD_OUT`) тоже
+        попадают в список: карточка, молча исчезнувшая с экрана, оставляет
+        пользователя в неведении о том, что произошло. Что скрывать и когда —
+        решает фронтенд.
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Запасной способ передать пользователя — для `EventSource`, который
+            не умеет выставлять заголовки.
+      responses:
+        '200':
+          description: >
+            Список очередей. В SSE-режиме то же тело приходит как событие
+            `update` при каждом изменении.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - type: object
+                      required: [product_id]
+                      properties:
+                        product_id:
+                          type: string
+                    - oneOf:
+                        - $ref: '#/components/schemas/RightActive'
+                        - $ref: '#/components/schemas/OfferPending'
+                        - $ref: '#/components/schemas/Queued'
+                        - $ref: '#/components/schemas/SoldOut'
+                        - $ref: '#/components/schemas/Declined'
+                        - $ref: '#/components/schemas/Purchased'
+              example:
+                - product_id: headphones-sennheiser
+                  status: QUEUED
+                  quantity: 1
+                  position: 3
+                  eta_seconds: 225
+                - product_id: console-ps5-slim
+                  status: RIGHT_ACTIVE
+                  token: 9f3a...
+                  quantity: 1
+                  expires_at: "2026-08-08T17:35:28Z"
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: update
+                data: [{"product_id":"headphones-sennheiser","status":"QUEUED","position":3,"eta_seconds":225}]
+        '401':
+          description: Пользователь не передан ни заголовком, ни query-параметром
+
   /rights/{token}:
     get:
       tags: [rights]
@@ -303,7 +483,9 @@ paths:
         изменение статуса: AvitoBackend не знает и не должен знать о
         внутренней модели статусов Queue Service, он просто репортит факт.
 
-        Вызывается AvitoBackend, не пользователем.
+        Вызывается AvitoBackend, не пользователем: требует заголовок
+        `X-Internal-Token` с общим секретом. Без него — `401`. Иначе любой
+        желающий мог бы пометить чужое право оплаченным.
 
         Эффект на стороне Queue Service:
         - право переводится в `USED` и не может быть использовано повторно;
@@ -384,6 +566,18 @@ components:
         status:
           type: string
           enum: [QUEUED]
+        position:
+          type: integer
+          minimum: 1
+          description: >
+            Позиция в очереди, считая с единицы. Присутствует только в этом
+            статусе — держатель права в очереди уже не стоит.
+        eta_seconds:
+          type: integer
+          minimum: 0
+          description: >
+            Оценка ожидания в секундах: сколько людей впереди, умноженное на
+            среднее время оплаты. Именно оценка, а не обещание.
 
     SoldOut:
       type: object

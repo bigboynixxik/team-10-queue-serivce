@@ -1,0 +1,12 @@
+.HomePage {
+  width: min(1120px, calc(100% - 32px));
+  margin-inline: auto;
+  padding: 120px 0 72px;
+}
+
+@media (max-width: 760px) {
+  .HomePage {
+    width: min(1120px, calc(100% - 24px));
+    padding-top: 24px;
+  }
+}

@@ -1,0 +1,28 @@
+.Header {
+  position: absolute;
+  top: 35px;
+  display: flex;
+  width: min(1120px, calc(100% - 32px));
+  align-items: center;
+  justify-content: space-between;
+  margin-inline: auto;
+  left: 0;
+  right: 0;
+}
+
+.Header__logo {
+  display: block;
+  width: 300px;
+  height: auto;
+}
+
+@media (max-width: 760px) {
+  .Header {
+    top: 16px;
+    width: min(1120px, calc(100% - 24px));
+  }
+
+  .Header__logo {
+    width: 146px;
+  }
+}

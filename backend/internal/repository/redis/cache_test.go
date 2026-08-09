@@ -110,7 +110,7 @@ func (s *CacheTestSuite) TestTryAllocate_Branches() {
 
 	alloc, avail, soldOut, err = s.repo.TryAllocate(s.ctx, "prod-2", 2)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), 2, alloc)
+	require.Equal(s.T(), 0, alloc)
 	require.Equal(s.T(), 0, avail)
 	require.False(s.T(), soldOut)
 
@@ -128,6 +128,28 @@ func (s *CacheTestSuite) TestTryAllocate_Branches() {
 	require.Equal(s.T(), 0, alloc)
 	require.Equal(s.T(), 0, avail)
 	require.True(s.T(), soldOut)
+}
+
+func (s *CacheTestSuite) TestTryAllocate_PartialOfferReservesAvailableUnits() {
+	err := s.repo.InitStock(s.ctx, "prod-partial-reservation", 5)
+	require.NoError(s.T(), err)
+
+	alloc, avail, soldOut, err := s.repo.TryAllocate(s.ctx, "prod-partial-reservation", 7)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 5, avail)
+	require.False(s.T(), soldOut)
+
+	stock, err := s.client.HGetAll(s.ctx, "stock:prod-partial-reservation").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "5", stock["product_count"])
+	require.Equal(s.T(), "0", stock["available_units"])
+
+	alloc, avail, soldOut, err = s.repo.TryAllocate(s.ctx, "prod-partial-reservation", 1)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 0, avail)
+	require.False(s.T(), soldOut)
 }
 
 func (s *CacheTestSuite) TestTryAllocate_RaceCondition() {
@@ -170,6 +192,55 @@ func (s *CacheTestSuite) TestTryAllocate_RaceCondition() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "5", res["product_count"])
 	require.Equal(s.T(), "0", res["available_units"])
+}
+
+func (s *CacheTestSuite) TestTryAllocate_PartialOfferRaceCondition() {
+	err := s.repo.InitStock(s.ctx, "prod-partial-race", 5)
+	require.NoError(s.T(), err)
+
+	const workers = 50
+
+	var wg sync.WaitGroup
+	var partialOfferCount int32
+	var queuedCount int32
+	var errorCount int32
+
+	wg.Add(workers)
+	start := make(chan struct{})
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+
+			alloc, avail, soldOut, errAlloc := s.repo.TryAllocate(s.ctx, "prod-partial-race", 10)
+			if errAlloc != nil {
+				atomic.AddInt32(&errorCount, 1)
+				return
+			}
+
+			switch {
+			case alloc == 0 && avail == 5 && !soldOut:
+				atomic.AddInt32(&partialOfferCount, 1)
+			case alloc == 0 && avail == 0 && !soldOut:
+				atomic.AddInt32(&queuedCount, 1)
+			default:
+				atomic.AddInt32(&errorCount, 1)
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	require.Equal(s.T(), int32(1), partialOfferCount)
+	require.Equal(s.T(), int32(workers-1), queuedCount)
+	require.Equal(s.T(), int32(0), errorCount)
+
+	stock, err := s.client.HGetAll(s.ctx, "stock:prod-partial-race").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "5", stock["product_count"])
+	require.Equal(s.T(), "0", stock["available_units"])
 }
 
 func (s *CacheTestSuite) TestQueue_FIFOBehavior() {
@@ -286,6 +357,81 @@ func (s *CacheTestSuite) TestPubSub() {
 	}
 }
 
+func (s *CacheTestSuite) TestSubscribeUpdates_UserAndQueueChannels() {
+	events, closeSubscription, err := s.repo.SubscribeUpdates(s.ctx, "prod-live", "user-live")
+	require.NoError(s.T(), err)
+
+	err = s.repo.PublishEvent(s.ctx, "prod-live", "another-user", map[string]string{"status": "QUEUED"})
+	require.NoError(s.T(), err)
+
+	select {
+	case <-events:
+		s.T().Fatal("received another user's event")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	err = s.repo.PublishEvent(s.ctx, "prod-live", "user-live", map[string]string{"status": "RIGHT_ACTIVE"})
+	require.NoError(s.T(), err)
+
+	select {
+	case <-events:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timeout waiting for user update")
+	}
+
+	err = s.repo.Enqueue(s.ctx, "prod-live", "queued-user")
+	require.NoError(s.T(), err)
+
+	select {
+	case <-events:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timeout waiting for product queue update")
+	}
+
+	err = s.repo.Enqueue(s.ctx, "another-product", "queued-user")
+	require.NoError(s.T(), err)
+
+	select {
+	case <-events:
+		s.T().Fatal("received another product's event")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	require.NoError(s.T(), closeSubscription())
+	require.NoError(s.T(), closeSubscription(), "subscription close must be idempotent")
+
+	select {
+	case _, ok := <-events:
+		require.False(s.T(), ok, "events channel must close with the subscription")
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timeout waiting for events channel to close")
+	}
+}
+
+func (s *CacheTestSuite) TestRestoreAvailableUnits_PublishesQueueUpdate() {
+	events, closeSubscription, err := s.repo.SubscribeUpdates(s.ctx, "prod-stock-live", "user-live")
+	require.NoError(s.T(), err)
+	defer func() {
+		require.NoError(s.T(), closeSubscription())
+	}()
+
+	err = s.client.HSet(s.ctx, "stock:prod-stock-live", "available_units", 0, "product_count", 5).Err()
+	require.NoError(s.T(), err)
+
+	err = s.repo.RestoreAvailableUnits(s.ctx, "prod-stock-live", 2)
+	require.NoError(s.T(), err)
+
+	select {
+	case <-events:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timeout waiting for stock update")
+	}
+
+	available, err := s.client.HGet(s.ctx, "stock:prod-stock-live", "available_units").Int()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 2, available)
+}
+
 func (s *CacheTestSuite) TestExpiryTimers() {
 	expiryTime := time.Now().UTC().Add(time.Hour)
 
@@ -329,6 +475,31 @@ func (s *CacheTestSuite) TestRestoreAvailableUnits() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "10", res["available_units"])
 	require.Equal(s.T(), "10", res["product_count"])
+}
+
+func (s *CacheTestSuite) TestRestoreAvailableUnits_AfterPartialOffer() {
+	err := s.repo.InitStock(s.ctx, "prod-partial-restore", 5)
+	require.NoError(s.T(), err)
+
+	alloc, avail, soldOut, err := s.repo.TryAllocate(s.ctx, "prod-partial-restore", 7)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, alloc)
+	require.Equal(s.T(), 5, avail)
+	require.False(s.T(), soldOut)
+
+	err = s.repo.RestoreAvailableUnits(s.ctx, "prod-partial-restore", avail)
+	require.NoError(s.T(), err)
+
+	stock, err := s.client.HGetAll(s.ctx, "stock:prod-partial-restore").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "5", stock["product_count"])
+	require.Equal(s.T(), "5", stock["available_units"])
+
+	alloc, avail, soldOut, err = s.repo.TryAllocate(s.ctx, "prod-partial-restore", 5)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 5, alloc)
+	require.Equal(s.T(), 0, avail)
+	require.False(s.T(), soldOut)
 }
 
 func (s *CacheTestSuite) TestGetFirstInQueue() {
@@ -590,4 +761,53 @@ func (s *CacheTestSuite) TestGetQueueMetrics_InfrastructureError() {
 	require.Error(s.T(), err)
 	require.Equal(s.T(), 0, rank)
 	require.Equal(s.T(), 0, avail)
+}
+
+func (s *CacheTestSuite) TestRefreshExpiryTimer_ExtendsExistingTimerOnlyForward() {
+	productID := "prod-heartbeat"
+	userID := "user-heartbeat"
+	initial := time.Now().UTC().Add(30 * time.Second).Truncate(time.Second)
+	later := initial.Add(10 * time.Second)
+	earlier := initial.Add(-10 * time.Second)
+
+	err := s.repo.AddToExpiryTimer(s.ctx, productID, userID, initial)
+	require.NoError(s.T(), err)
+
+	refreshed, err := s.repo.RefreshExpiryTimer(s.ctx, productID, userID, later)
+	require.NoError(s.T(), err)
+	require.True(s.T(), refreshed)
+
+	member := productID + ":" + userID
+	score, err := s.client.ZScore(s.ctx, "expiring:rights", member).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(later.Unix()), score)
+
+	refreshed, err = s.repo.RefreshExpiryTimer(s.ctx, productID, userID, earlier)
+	require.NoError(s.T(), err)
+	require.True(s.T(), refreshed, "the lease still exists even when its score is already newer")
+
+	score, err = s.client.ZScore(s.ctx, "expiring:rights", member).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(later.Unix()), score, "a late heartbeat must not shorten the lease")
+
+	expired := time.Now().UTC().Add(-time.Second).Truncate(time.Second)
+	err = s.repo.AddToExpiryTimer(s.ctx, productID, userID, expired)
+	require.NoError(s.T(), err)
+	refreshed, err = s.repo.RefreshExpiryTimer(s.ctx, productID, userID, later.Add(time.Minute))
+	require.NoError(s.T(), err)
+	require.False(s.T(), refreshed, "an expired lease must not be revived before the worker claims it")
+
+	score, err = s.client.ZScore(s.ctx, "expiring:rights", member).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(expired.Unix()), score)
+
+	err = s.repo.RemoveFromExpiryTimer(s.ctx, productID, userID)
+	require.NoError(s.T(), err)
+
+	refreshed, err = s.repo.RefreshExpiryTimer(s.ctx, productID, userID, later.Add(time.Minute))
+	require.NoError(s.T(), err)
+	require.False(s.T(), refreshed, "a worker-claimed lease must not be recreated")
+
+	_, err = s.client.ZScore(s.ctx, "expiring:rights", member).Result()
+	require.ErrorIs(s.T(), err, redis.Nil)
 }

@@ -1,0 +1,58 @@
+[
+  {
+    "id": "wireless-headphones",
+    "title": "Наушники Sennheiser Momentum 4 Wireless",
+    "description": "Наушники Sennheiser Momentum 4 Wireless",
+    "price": 12990,
+    "image": "/assets/wireless-headphones.jpg"
+  },
+  {
+    "id": "gaming-console",
+    "title": "Игровая консоль PlayStation 5 Slim Digital Edition",
+    "description": "Компактная консоль нового поколения для дома.",
+    "price": 49990,
+    "image": "/assets/gaming-console.jpg"
+  },
+  {
+    "id": "smart-watch",
+    "title": "Смарт-часы HUAWEI WATCH GT 6 Pro 46 mm",
+    "description": "Отслеживают тренировки, сон и уведомления.",
+    "price": 18990,
+    "image": "/assets/smart-watch.jpg"
+  },
+  {
+    "id": "macbook-air",
+    "title": "Ноутбук Apple MacBook Air 13 M4",
+    "description": "Лёгкий ноутбук для работы, учёбы и творчества.",
+    "price": 119990,
+    "image": "/assets/macbook-air.jpg"
+  },
+  {
+    "id": "mirrorless-camera",
+    "title": "Камера Sony Alpha 7 IV",
+    "description": "Полнокадровая камера для фото и видео.",
+    "price": 219990,
+    "image": "/assets/mirrorless-camera.jpg"
+  },
+  {
+    "id": "electric-scooter",
+    "title": "Электросамокат Ninebot Max G2",
+    "description": "Надёжный городской самокат с большим запасом хода.",
+    "price": 74990,
+    "image": "/assets/electric-scooter.jpg"
+  },
+  {
+    "id": "robot-vacuum",
+    "title": "Робот-пылесос Dreame L40 Ultra",
+    "description": "Влажная и сухая уборка с автоматическим обслуживанием.",
+    "price": 69990,
+    "image": "/assets/robot-vacuum.jpg"
+  },
+  {
+    "id": "coffee-machine",
+    "title": "Кофемашина DeLonghi Magnifica Evo",
+    "description": "Автоматическая кофемашина для любимых напитков.",
+    "price": 54990,
+    "image": "/assets/coffee-machine.jpg"
+  }
+]

@@ -22,12 +22,24 @@ type DurableRepo interface {
 	// It handles (product_id, user_id) conflicts gracefully.
 	UpsertMembership(ctx context.Context, membership *models.QueueMembership) error
 
-	// UpdateStockAndRightTx atomically marks a right as USED and decrements the product_stock.
-	// This represents the final confirmation of a successful payment.
-	UpdateStockAndRightTx(ctx context.Context, token string, orderID string, quantity int) error
+	// UseRightTx atomically locks an ACTIVE right, marks it as USED, and decrements
+	// product_stock using the quantity stored with the right. transitioned is false
+	// for an already processed webhook, so external side effects are not repeated.
+	UseRightTx(ctx context.Context, token string, orderID string, now time.Time) (right *models.Right, transitioned bool, err error)
+
+	// ExpireRightAndUpsertMembershipTx atomically marks an ACTIVE right as EXPIRED
+	// and persists the corresponding terminal membership state.
+	ExpireRightAndUpsertMembershipTx(ctx context.Context, token string, membership *models.QueueMembership) (right *models.Right, transitioned bool, err error)
 
 	// SaveInitialStock persists the physical stock fetched from AvitoBackend.
 	SaveInitialStock(ctx context.Context, stock *models.ProductStock) error
+
+	// CountMembershipsByStatus reports how many users sit in each status for a
+	// product. Reporting read, not part of the allocation path.
+	CountMembershipsByStatus(ctx context.Context, productID string) (map[models.MembershipStatus]int, error)
+
+	// ListMembershipsByUser returns every queue the user takes part in.
+	ListMembershipsByUser(ctx context.Context, userID string) ([]*models.QueueMembership, error)
 }
 
 // CacheRepo defines the contract for high-speed, concurrency-safe storage (Redis).
@@ -61,12 +73,20 @@ type CacheRepo interface {
 	// GetRight retrieves a cached right by its token.
 	GetRight(ctx context.Context, token string) (*models.Right, error)
 
+	// GetStock reads the cached stock counters of a product.
+	GetStock(ctx context.Context, productID string) (productCount, available int, err error)
+
 	// PublishEvent broadcasts a status change to connected WebSocket clients.
 	PublishEvent(ctx context.Context, productID string, userID string, payload interface{}) error
 
 	// AddToExpiryTimer sets up background tracking for a time-bound right or offer.
 	AddToExpiryTimer(ctx context.Context, productID string, userID string, expiresAt time.Time) error
 
+	// RefreshExpiryTimer atomically extends an existing timer without recreating
+	// a timer that the expiration worker has already claimed.
+	RefreshExpiryTimer(
+		ctx context.Context, productID string, userID string, expiresAt time.Time,
+	) (refreshed bool, err error)
 	// RemoveFromExpiryTimer removes a user's timer if they complete an action before expiration.
 	RemoveFromExpiryTimer(ctx context.Context, productID string, userID string) error
 

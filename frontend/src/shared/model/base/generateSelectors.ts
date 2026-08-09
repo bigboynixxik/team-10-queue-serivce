@@ -1,21 +1,23 @@
-import type { StoreApi, UseBoundStore } from "zustand";
-import { useShallow } from "zustand/shallow";
+import type { StoreApi, UseBoundStore } from 'zustand';
+import { useShallow } from 'zustand/shallow';
 
 // https://zustand.docs.pmnd.rs/guides/auto-generating-selectors
 
-type WithSelectors<S> = S extends { getState: () => infer T }
-	? S & { use: { [K in keyof T]: () => T[K] } }
-	: never;
+type Selectors<T> = { [K in keyof T]: () => T[K] };
+
+type WithSelectors<S extends UseBoundStore<StoreApi<object>>> = S & {
+  use: Selectors<ReturnType<S['getState']>>;
+};
 
 export const createSelectors = <S extends UseBoundStore<StoreApi<object>>>(
-	_store: S,
-) => {
-	const store = _store as WithSelectors<typeof _store>;
-	store.use = {};
-	for (const k of Object.keys(store.getState())) {
-		(store.use as any)[k] = () =>
-			_store(useShallow((s) => s[k as keyof typeof s]));
-	}
+  store: S,
+): WithSelectors<S> => {
+  const use: Record<string, () => unknown> = {};
 
-	return store;
+  for (const key of Object.keys(store.getState())) {
+    use[key] = () => store(useShallow((state) => state[key as keyof typeof state]));
+  }
+
+  // форму use собираем в рантайме поэтому каст нужен
+  return Object.assign(store, { use }) as unknown as WithSelectors<S>;
 };

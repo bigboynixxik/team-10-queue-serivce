@@ -17,12 +17,13 @@ import (
 
 // QueueService orchestrates the queue state machine, durable storage, and fast cache.
 type QueueService struct {
-	durable        DurableRepo
-	cache          CacheRepo
-	avito          AvitoClient
-	offerTTL       time.Duration
-	paymentTTL     time.Duration
-	avgPaymentTime time.Duration
+	durable          DurableRepo
+	cache            CacheRepo
+	avito            AvitoClient
+	offerTTL         time.Duration
+	paymentTTL       time.Duration
+	avgPaymentTime   time.Duration
+	heartbeatTimeout time.Duration
 }
 
 // NewQueueService constructs a new QueueService.
@@ -33,14 +34,16 @@ func NewQueueService(
 	offerTTL time.Duration,
 	paymentTTL time.Duration,
 	avgPaymentTime time.Duration,
+	heartbeatTimeout time.Duration,
 ) *QueueService {
 	return &QueueService{
-		durable:        durable,
-		cache:          cache,
-		avito:          avito,
-		offerTTL:       offerTTL,
-		paymentTTL:     paymentTTL,
-		avgPaymentTime: avgPaymentTime,
+		durable:          durable,
+		cache:            cache,
+		avito:            avito,
+		offerTTL:         offerTTL,
+		paymentTTL:       paymentTTL,
+		avgPaymentTime:   avgPaymentTime,
+		heartbeatTimeout: heartbeatTimeout,
 	}
 }
 
@@ -273,37 +276,80 @@ func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string
 // DeclineOffer rejects a pending offer. The reserved stock is entirely returned
 // to the available pool, and the queue is advanced.
 func (s *QueueService) DeclineOffer(ctx context.Context, productID, userID string) error {
+	return s.leaveQueue(ctx, productID, userID, true)
+}
+
+// LeaveQueue ends a user's participation when they are queued, considering a
+// partial offer, or hold an active purchase right.
+func (s *QueueService) LeaveQueue(ctx context.Context, productID, userID string) error {
+	return s.leaveQueue(ctx, productID, userID, false)
+}
+
+func (s *QueueService) leaveQueue(ctx context.Context, productID, userID string, offerOnly bool) error {
 	log := logger.FromContext(ctx)
 
 	mem, err := s.cache.GetMembership(ctx, productID, userID)
 	if err != nil {
-		return fmt.Errorf("service.DeclineOffer get membership: %w", err)
+		return fmt.Errorf("service.leaveQueue get membership: %w", err)
 	}
 
 	if mem.ExpiresAt != nil && time.Now().UTC().After(*mem.ExpiresAt) {
 		return models.ErrTokenExpired
 	}
 
-	if mem.Status != models.MembershipStatusOfferPending || mem.AvailableQuantity == nil {
+	if offerOnly && mem.Status != models.MembershipStatusOfferPending {
 		return models.ErrInvalidStatus
 	}
 
-	returnedQty := *mem.AvailableQuantity
+	returnedQty := 0
+	removeFromQueue := false
+	removeExpiryTimer := false
+
+	switch mem.Status {
+	case models.MembershipStatusQueued:
+		if offerOnly {
+			return models.ErrInvalidStatus
+		}
+		removeFromQueue = true
+	case models.MembershipStatusOfferPending:
+		if mem.AvailableQuantity == nil {
+			return models.ErrInvalidStatus
+		}
+		returnedQty = *mem.AvailableQuantity
+		removeExpiryTimer = true
+	case models.MembershipStatusRightActive:
+		if offerOnly {
+			return models.ErrInvalidStatus
+		}
+		return s.expireActiveRight(ctx, mem, true)
+	default:
+		return models.ErrInvalidStatus
+	}
+
 	now := time.Now().UTC()
 
 	mem.Status = models.MembershipStatusDeclined
 	mem.AvailableQuantity = nil
+	mem.CurrentToken = nil
 	mem.ExpiresAt = nil
 	mem.UpdatedAt = now
 
 	if err := s.durable.UpsertMembership(ctx, mem); err != nil {
-		return fmt.Errorf("service.DeclineOffer upsert final state: %w", err)
+		return fmt.Errorf("service.leaveQueue upsert final state: %w", err)
 	}
 
 	s.syncCacheState(ctx, mem, nil)
 
-	if err := s.cache.RemoveFromExpiryTimer(ctx, productID, userID); err != nil {
-		log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", err))
+	if removeFromQueue {
+		if err := s.cache.RemoveFromQueue(ctx, productID, userID); err != nil {
+			log.ErrorContext(ctx, "failed to remove user from queue", slog.Any("error", err))
+		}
+	}
+
+	if removeExpiryTimer {
+		if err := s.cache.RemoveFromExpiryTimer(ctx, productID, userID); err != nil {
+			log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", err))
+		}
 	}
 
 	if returnedQty > 0 {
@@ -311,8 +357,68 @@ func (s *QueueService) DeclineOffer(ctx context.Context, productID, userID strin
 			log.ErrorContext(ctx, "failed to restore unused units", slog.Any("error", err))
 		}
 		if err := s.AdvanceQueue(ctx, productID); err != nil {
-			log.ErrorContext(ctx, "failed to advance queue after decline", slog.Any("error", err))
+			log.ErrorContext(ctx, "failed to advance queue after leaving", slog.Any("error", err))
 		}
+	}
+
+	return nil
+}
+
+// expireActiveRight performs the single allowed unpaid terminal transition.
+// PostgreSQL decides which concurrent operation won; only the winner restores stock.
+func (s *QueueService) expireActiveRight(
+	ctx context.Context,
+	mem *models.QueueMembership,
+	removeExpiryTimer bool,
+) error {
+	log := logger.FromContext(ctx)
+
+	if mem.CurrentToken == nil {
+		return models.ErrInvalidStatus
+	}
+
+	token := *mem.CurrentToken
+	returnedQty := mem.Quantity
+	finalMem := *mem
+	finalMem.Status = models.MembershipStatusDeclined
+	finalMem.AvailableQuantity = nil
+	finalMem.CurrentToken = nil
+	finalMem.ExpiresAt = nil
+	finalMem.UpdatedAt = time.Now().UTC()
+
+	right, transitioned, err := s.durable.ExpireRightAndUpsertMembershipTx(ctx, token, &finalMem)
+	if err != nil {
+		return fmt.Errorf("service.expireActiveRight transaction: %w", err)
+	}
+
+	if !transitioned {
+		if right != nil {
+			if errCache := s.cache.SetRight(ctx, right); errCache != nil {
+				log.ErrorContext(ctx, "failed to refresh terminal right cache", slog.Any("error", errCache))
+			}
+			if right.Status == models.RightStatusExpired {
+				s.syncCacheState(ctx, &finalMem, right)
+			}
+		}
+		return nil
+	}
+
+	s.syncCacheState(ctx, &finalMem, right)
+
+	if removeExpiryTimer {
+		if errRemove := s.cache.RemoveFromExpiryTimer(ctx, mem.ProductID, mem.UserID); errRemove != nil {
+			log.ErrorContext(ctx, "failed to remove expired right timer", slog.Any("error", errRemove))
+		}
+	}
+
+	if returnedQty > 0 {
+		if errRestore := s.cache.RestoreAvailableUnits(ctx, mem.ProductID, returnedQty); errRestore != nil {
+			log.ErrorContext(ctx, "failed to restore expired right units", slog.Any("error", errRestore))
+		}
+	}
+
+	if errAdvance := s.AdvanceQueue(ctx, mem.ProductID); errAdvance != nil {
+		log.ErrorContext(ctx, "failed to advance queue after right expiration", slog.Any("error", errAdvance))
 	}
 
 	return nil
@@ -331,7 +437,11 @@ func (s *QueueService) syncCacheState(ctx context.Context, mem *models.QueueMemb
 		log.ErrorContext(ctx, "failed to cache membership", slog.Any("error", err))
 	}
 	if mem.ExpiresAt != nil {
-		if err := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, *mem.ExpiresAt); err != nil {
+		expiryDeadline := *mem.ExpiresAt
+		if mem.Status == models.MembershipStatusRightActive {
+			expiryDeadline = s.rightHeartbeatDeadline(time.Now().UTC(), expiryDeadline)
+		}
+		if err := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, expiryDeadline); err != nil {
 			log.ErrorContext(ctx, "failed to add to expiry timer", slog.Any("error", err))
 		}
 	}
@@ -453,9 +563,16 @@ func (s *QueueService) rollbackAdvance(ctx context.Context, productID, userID st
 // It strictly checks ownership, expiration, and status to prevent fraud, and uses a database
 // fallback in case of a cache miss.
 func (s *QueueService) ValidateRight(ctx context.Context, token string, userID string) (*models.Right, error) {
+	log := logger.FromContext(ctx)
+
 	right, err := s.cache.GetRight(ctx, token)
 	if errors.Is(err, models.ErrTokenNotFound) {
 		right, err = s.durable.GetRightByToken(ctx, token)
+		if err == nil {
+			if errCache := s.cache.SetRight(ctx, right); errCache != nil {
+				log.ErrorContext(ctx, "failed to restore right cache", slog.Any("error", errCache))
+			}
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("service.ValidateRight fetch: %w", err)
@@ -465,15 +582,18 @@ func (s *QueueService) ValidateRight(ctx context.Context, token string, userID s
 		return nil, models.ErrForbidden
 	}
 
-	if right.Status == models.RightStatusUsed {
+	switch right.Status {
+	case models.RightStatusUsed:
 		return nil, models.ErrTokenUsed
-	}
-
-	if right.Status != models.RightStatusActive {
+	case models.RightStatusExpired:
+		return nil, models.ErrTokenExpired
+	case models.RightStatusActive:
+		// Continue with the time-bound validation.
+	default:
 		return nil, models.ErrInvalidStatus
 	}
 
-	if time.Now().UTC().After(right.ExpiresAt) {
+	if !time.Now().UTC().Before(right.ExpiresAt) {
 		return nil, models.ErrTokenExpired
 	}
 
@@ -485,49 +605,44 @@ func (s *QueueService) ValidateRight(ctx context.Context, token string, userID s
 // and triggers queue advancement upon successful physical stock reduction.
 func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID string) error {
 	log := logger.FromContext(ctx)
+	now := time.Now().UTC()
 
-	right, err := s.cache.GetRight(ctx, token)
-	if errors.Is(err, models.ErrTokenNotFound) {
-		right, err = s.durable.GetRightByToken(ctx, token)
-	}
-	if err != nil {
-		return fmt.Errorf("service.ProcessPayment fetch right: %w", err)
-	}
-
-	if right.Status == models.RightStatusUsed {
-		return nil
-	}
-
-	err = s.durable.UpdateStockAndRightTx(ctx, token, orderID, right.Quantity)
+	right, transitioned, err := s.durable.UseRightTx(ctx, token, orderID, now)
 	if err != nil {
 		return fmt.Errorf("service.ProcessPayment transaction: %w", err)
 	}
 
-	right.Status = models.RightStatusUsed
-	right.OrderID = &orderID
+	if transitioned {
+		if errCommit := s.cache.CommitPurchase(context.Background(), right.ProductID, right.Quantity); errCommit != nil {
+			log.ErrorContext(ctx, "failed to commit physical purchase in cache", slog.Any("error", errCommit))
+		}
 
-	if errCommit := s.cache.CommitPurchase(context.Background(), right.ProductID, right.Quantity); errCommit != nil {
-		log.ErrorContext(ctx, "failed to commit physical purchase in cache", slog.Any("error", errCommit))
-	}
-
-	// AvitoBackend owns the physical stock, so the sale is not real until it knows
-	// (docs/design_context.md, п. 7). A failure here must not fail the payment:
-	// the money is already taken and our own state is committed, so the only sane
-	// reaction is to log and let reconciliation deal with it.
-	if errStock := s.avito.DecrementStock(ctx, right.ProductID, right.Quantity); errStock != nil {
-		log.ErrorContext(ctx, "failed to report stock decrement to avito", slog.Any("error", errStock))
+		// AvitoBackend owns the physical stock, so the sale is not real until it knows
+		// (docs/design_context.md, п. 7). A failure here must not fail the payment:
+		// the money is already taken and our own state is committed, so the only sane
+		// reaction is to log and let reconciliation deal with it.
+		if errStock := s.avito.DecrementStock(ctx, right.ProductID, right.Quantity); errStock != nil {
+			log.ErrorContext(ctx, "failed to report stock decrement to avito", slog.Any("error", errStock))
+		}
 	}
 
 	mem, errMem := s.cache.GetMembership(ctx, right.ProductID, right.UserID)
 	if errMem == nil {
-		mem.Status = models.MembershipStatusPurchased
-		mem.UpdatedAt = time.Now().UTC()
+		if mem.Status != models.MembershipStatusPurchased {
+			mem.Status = models.MembershipStatusPurchased
+			mem.AvailableQuantity = nil
+			mem.CurrentToken = nil
+			mem.ExpiresAt = nil
+			mem.UpdatedAt = now
 
-		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
-			log.ErrorContext(ctx, "failed to upsert final purchased membership", slog.Any("error", errUpsert))
+			if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
+				log.ErrorContext(ctx, "failed to upsert final purchased membership", slog.Any("error", errUpsert))
+			}
+
+			s.syncCacheState(ctx, mem, right)
+		} else if errCacheRight := s.cache.SetRight(ctx, right); errCacheRight != nil {
+			log.ErrorContext(ctx, "failed to refresh used right cache", slog.Any("error", errCacheRight))
 		}
-
-		s.syncCacheState(ctx, mem, right)
 
 		if errRemove := s.cache.RemoveFromExpiryTimer(ctx, right.ProductID, right.UserID); errRemove != nil {
 			log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", errRemove))
@@ -539,8 +654,10 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 		}
 	}
 
-	if errAdvance := s.AdvanceQueue(context.Background(), right.ProductID); errAdvance != nil {
-		log.ErrorContext(ctx, "failed to advance queue after successful payment", slog.Any("error", errAdvance))
+	if transitioned {
+		if errAdvance := s.AdvanceQueue(context.Background(), right.ProductID); errAdvance != nil {
+			log.ErrorContext(ctx, "failed to advance queue after successful payment", slog.Any("error", errAdvance))
+		}
 	}
 
 	return nil
@@ -571,6 +688,10 @@ func (s *QueueService) ProcessExpirations(ctx context.Context) error {
 		mem, err := s.cache.GetMembership(ctx, productID, userID)
 		if err != nil {
 			log.ErrorContext(ctx, "failed to get membership for expired item", slog.Any("error", err), slog.String("key", key))
+			retryAt := now.Add(time.Second)
+			if errRetry := s.cache.AddToExpiryTimer(ctx, productID, userID, retryAt); errRetry != nil {
+				log.ErrorContext(ctx, "failed to reschedule expiration after membership fetch", slog.Any("error", errRetry))
+			}
 			continue
 		}
 
@@ -578,21 +699,37 @@ func (s *QueueService) ProcessExpirations(ctx context.Context) error {
 		if mem.Status != models.MembershipStatusOfferPending && mem.Status != models.MembershipStatusRightActive {
 			continue
 		}
-
-		returnedQty := 0
-		if mem.Status == models.MembershipStatusOfferPending && mem.AvailableQuantity != nil {
-			returnedQty = *mem.AvailableQuantity
-		} else if mem.Status == models.MembershipStatusRightActive {
-			returnedQty = mem.Quantity
+		if mem.Status == models.MembershipStatusRightActive {
+			if errExpire := s.expireActiveRight(ctx, mem, false); errExpire != nil {
+				log.ErrorContext(ctx, "failed to expire active right", slog.Any("error", errExpire), slog.String("user_id", userID))
+				if !errors.Is(errExpire, models.ErrInvalidStatus) {
+					retryAt := now.Add(time.Second)
+					if errRetry := s.cache.AddToExpiryTimer(ctx, productID, userID, retryAt); errRetry != nil {
+						log.ErrorContext(ctx, "failed to reschedule right expiration", slog.Any("error", errRetry))
+					}
+				}
+			}
+			continue
 		}
+
+		if mem.AvailableQuantity == nil {
+			log.ErrorContext(ctx, "expired offer has no available quantity", slog.String("user_id", userID))
+			continue
+		}
+		returnedQty := *mem.AvailableQuantity
 
 		mem.Status = models.MembershipStatusDeclined // Используем статус сброса/истечения
 		mem.AvailableQuantity = nil
+		mem.CurrentToken = nil
 		mem.ExpiresAt = nil
 		mem.UpdatedAt = now
 
 		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
 			log.ErrorContext(ctx, "failed to upsert expired membership", slog.Any("error", errUpsert), slog.String("user_id", userID))
+			retryAt := now.Add(time.Second)
+			if errRetry := s.cache.AddToExpiryTimer(ctx, productID, userID, retryAt); errRetry != nil {
+				log.ErrorContext(ctx, "failed to reschedule expiration after durable update", slog.Any("error", errRetry))
+			}
 			continue
 		}
 

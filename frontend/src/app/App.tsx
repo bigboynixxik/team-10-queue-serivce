@@ -1,18 +1,13 @@
-import { StrictMode} from "react";
-import { HelmetProvider } from 'react-helmet-async';
 import { RouterProvider } from 'react-router-dom';
 
 import { QueryProvider } from '@app/providers/QueryProvider';
 import { router } from '@app/router';
+import { ToastProvider } from '@ui';
 
-export const App = (): React.JSX.Element => {
-  return (
-    <StrictMode>
-      <HelmetProvider>
-        <QueryProvider>
-          <RouterProvider router={router} />
-        </QueryProvider>
-      </HelmetProvider>
-    </StrictMode>
-  );
-}
+export const App = (): React.JSX.Element => (
+  <QueryProvider>
+    <ToastProvider>
+      <RouterProvider router={router} />
+    </ToastProvider>
+  </QueryProvider>
+);

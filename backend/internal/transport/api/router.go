@@ -6,6 +6,7 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"backend/internal/transport"
 	"backend/internal/transport/mw"
@@ -13,12 +14,18 @@ import (
 
 // QueueHandler serves the queue and rights endpoints.
 type QueueHandler struct {
-	service transport.QueueService
+	service           transport.QueueService
+	realtime          transport.RealtimeSubscriber
+	heartbeatInterval time.Duration
 }
 
-// NewQueueHandler creates the handler over the given service.
-func NewQueueHandler(service transport.QueueService) *QueueHandler {
-	return &QueueHandler{service: service}
+// NewQueueHandler creates the handler over the service and realtime event source.
+func NewQueueHandler(
+	service transport.QueueService,
+	realtime transport.RealtimeSubscriber,
+	heartbeatInterval time.Duration,
+) *QueueHandler {
+	return &QueueHandler{service: service, realtime: realtime, heartbeatInterval: heartbeatInterval}
 }
 
 // APIPrefix versions the public API. Everything a client calls lives behind it,
@@ -46,6 +53,14 @@ func NewRouter(h *QueueHandler, log *slog.Logger, internalToken string) http.Han
 	user.HandleFunc("DELETE "+APIPrefix+"/queue/{product_id}/members/me", h.leave)
 
 	mux.Handle(APIPrefix+"/queue/", mw.UserMiddleware(user))
+
+	// Public: head counts only, nothing tied to a person. Registered on the outer
+	// mux so it stays outside UserMiddleware — the more specific pattern wins over
+	// the /queue/ prefix above.
+	mux.HandleFunc("GET "+APIPrefix+"/queue/{product_id}/stats", h.queueStats)
+
+	// Acts on behalf of a user, so it goes through UserMiddleware like /queue.
+	mux.Handle("GET "+APIPrefix+"/me/queues", mw.UserMiddleware(http.HandlerFunc(h.userQueues)))
 
 	mux.Handle("GET "+APIPrefix+"/rights/{token}",
 		mw.UserMiddleware(http.HandlerFunc(h.validateRight)))

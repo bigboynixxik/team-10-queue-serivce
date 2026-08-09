@@ -23,6 +23,8 @@ export default defineConfig({
       '@features': './src/features',
       '@entities': './src/entities',
       '@shared': './src/shared',
+      '@ui': './src/shared/ui',
+      '@test': './test',
     },
   },
   server: {

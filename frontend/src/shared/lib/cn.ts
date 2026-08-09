@@ -1,5 +1,12 @@
-import { withNaming as wn } from '@bem-react/classname';
+type Modifiers = Record<string, boolean | null | undefined>;
 
-const cn = wn({ n: '', e: '__', m: '_' });
+export const cn =
+  (block: string) =>
+  (element?: string, modifiers?: Modifiers): string => {
+    const base = element ? `${block}__${element}` : block;
+    const enabledModifiers = Object.entries(modifiers ?? {})
+      .filter(([, enabled]) => enabled)
+      .map(([modifier]) => `${base}--${modifier}`);
 
-export default cn;
+    return enabledModifiers.length ? enabledModifiers.join(' ') : base;
+  };

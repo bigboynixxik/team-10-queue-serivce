@@ -1,0 +1,9 @@
+---
+- name: Import apt update playbook
+  ansible.builtin.import_playbook: playbooks/update.yml
+
+- name: Import Docker install playbook
+  ansible.builtin.import_playbook: playbooks/docker.yml
+
+- name: Import htop install playbook
+  ansible.builtin.import_playbook: playbooks/htop.yml

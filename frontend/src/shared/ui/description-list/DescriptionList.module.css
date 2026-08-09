@@ -1,0 +1,27 @@
+.DescriptionList {
+  /* margin: 16px 0 0; */
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.DescriptionList__item {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.4fr) 1fr;
+  border-top: 1px solid #e2e8f0;
+}
+
+.DescriptionList__item:first-child {
+  border-top: 0;
+}
+
+.DescriptionList__label,
+.DescriptionList__value {
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.DescriptionList__label {
+  color: var(--muted);
+  background: #f8fafc;
+}
