@@ -27,24 +27,38 @@ func writeJSON(w http.ResponseWriter, r *http.Request, code int, body any) {
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	log := logger.FromContext(r.Context())
 
+	var status int
+
 	switch {
 	case errors.Is(err, models.ErrQuantityInvalid), errors.Is(err, models.ErrQuantityExceeded):
-		w.WriteHeader(http.StatusBadRequest)
+		status = http.StatusBadRequest
 	case errors.Is(err, models.ErrForbidden):
-		w.WriteHeader(http.StatusForbidden)
+		status = http.StatusForbidden
 	case errors.Is(err, models.ErrNoPendingOffer), errors.Is(err, models.ErrInvalidStatus):
-		w.WriteHeader(http.StatusConflict)
+		status = http.StatusConflict
 	case errors.Is(err, models.ErrStockDepleted):
-		writeJSON(w, r, http.StatusConflict, membershipResponse{Status: models.MembershipStatusSoldOut})
+		status = http.StatusConflict
 	case errors.Is(err, models.ErrMembershipNotFound),
 		errors.Is(err, models.ErrTokenNotFound),
 		errors.Is(err, models.ErrTokenExpired),
 		errors.Is(err, models.ErrTokenUsed):
-		w.WriteHeader(http.StatusNotFound)
+		status = http.StatusNotFound
 	default:
-		log.Error("unexpected error", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
+		status = http.StatusInternalServerError
 	}
+
+	if status == http.StatusInternalServerError {
+		log.Error("unexpected error", "error", err, "status", status)
+	} else {
+		log.Info("domain error", "error", err, "status", status)
+	}
+
+	if errors.Is(err, models.ErrStockDepleted) {
+		writeJSON(w, r, status, membershipResponse{Status: models.MembershipStatusSoldOut})
+		return
+	}
+
+	w.WriteHeader(status)
 }
 
 // decodeJSON answers 400 itself and reports whether the caller may continue.
