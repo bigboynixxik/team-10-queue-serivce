@@ -659,3 +659,34 @@ func (c *CacheRepo) GetStock(ctx context.Context, productID string) (productCoun
 
 	return productCount, available, nil
 }
+
+// joinClaimKey guards a single (product, user) pair while their entry into the
+// queue is being decided.
+func joinClaimKey(productID, userID string) string {
+	return fmt.Sprintf("join-claim:%s:%s", productID, userID)
+}
+
+// ClaimJoin marks the start of an entry attempt and reports whether the caller
+// won the claim. Losing means a concurrent request for the same user is already
+// mid-flight.
+//
+// The claim carries a short TTL so a process that dies mid-entry cannot lock the
+// user out: the key expires on its own and the next attempt proceeds.
+func (c *CacheRepo) ClaimJoin(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error) {
+	won, err := c.client.SetNX(ctx, joinClaimKey(productID, userID), "1", ttl).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis.CacheRepo.ClaimJoin: %w", err)
+	}
+
+	return won, nil
+}
+
+// ReleaseJoinClaim frees the claim once the entry is decided, so a legitimate
+// repeat request does not have to wait out the whole TTL.
+func (c *CacheRepo) ReleaseJoinClaim(ctx context.Context, productID, userID string) error {
+	if err := c.client.Del(ctx, joinClaimKey(productID, userID)).Err(); err != nil {
+		return fmt.Errorf("redis.CacheRepo.ReleaseJoinClaim: %w", err)
+	}
+
+	return nil
+}

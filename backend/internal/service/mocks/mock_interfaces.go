@@ -57,6 +57,22 @@ func (mr *MockDurableRepoMockRecorder) CountMembershipsByStatus(ctx, productID a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountMembershipsByStatus", reflect.TypeOf((*MockDurableRepo)(nil).CountMembershipsByStatus), ctx, productID)
 }
 
+// ExpireRightAndUpsertMembershipTx mocks base method.
+func (m *MockDurableRepo) ExpireRightAndUpsertMembershipTx(ctx context.Context, token string, membership *models.QueueMembership) (*models.Right, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExpireRightAndUpsertMembershipTx", ctx, token, membership)
+	ret0, _ := ret[0].(*models.Right)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ExpireRightAndUpsertMembershipTx indicates an expected call of ExpireRightAndUpsertMembershipTx.
+func (mr *MockDurableRepoMockRecorder) ExpireRightAndUpsertMembershipTx(ctx, token, membership any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpireRightAndUpsertMembershipTx", reflect.TypeOf((*MockDurableRepo)(nil).ExpireRightAndUpsertMembershipTx), ctx, token, membership)
+}
+
 // GetRightByToken mocks base method.
 func (m *MockDurableRepo) GetRightByToken(ctx context.Context, token string) (*models.Right, error) {
 	m.ctrl.T.Helper()
@@ -115,20 +131,18 @@ func (mr *MockDurableRepoMockRecorder) SaveRight(ctx, right any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveRight", reflect.TypeOf((*MockDurableRepo)(nil).SaveRight), ctx, right)
 }
 
-// ExpireRightAndUpsertMembershipTx mocks base method.
-func (m *MockDurableRepo) ExpireRightAndUpsertMembershipTx(ctx context.Context, token string, membership *models.QueueMembership) (*models.Right, bool, error) {
+// UpsertMembership mocks base method.
+func (m *MockDurableRepo) UpsertMembership(ctx context.Context, membership *models.QueueMembership) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExpireRightAndUpsertMembershipTx", ctx, token, membership)
-	ret0, _ := ret[0].(*models.Right)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret := m.ctrl.Call(m, "UpsertMembership", ctx, membership)
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
-// ExpireRightAndUpsertMembershipTx indicates an expected call of ExpireRightAndUpsertMembershipTx.
-func (mr *MockDurableRepoMockRecorder) ExpireRightAndUpsertMembershipTx(ctx, token, membership any) *gomock.Call {
+// UpsertMembership indicates an expected call of UpsertMembership.
+func (mr *MockDurableRepoMockRecorder) UpsertMembership(ctx, membership any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpireRightAndUpsertMembershipTx", reflect.TypeOf((*MockDurableRepo)(nil).ExpireRightAndUpsertMembershipTx), ctx, token, membership)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertMembership", reflect.TypeOf((*MockDurableRepo)(nil).UpsertMembership), ctx, membership)
 }
 
 // UseRightTx mocks base method.
@@ -145,20 +159,6 @@ func (m *MockDurableRepo) UseRightTx(ctx context.Context, token, orderID string,
 func (mr *MockDurableRepoMockRecorder) UseRightTx(ctx, token, orderID, now any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UseRightTx", reflect.TypeOf((*MockDurableRepo)(nil).UseRightTx), ctx, token, orderID, now)
-}
-
-// UpsertMembership mocks base method.
-func (m *MockDurableRepo) UpsertMembership(ctx context.Context, membership *models.QueueMembership) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpsertMembership", ctx, membership)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// UpsertMembership indicates an expected call of UpsertMembership.
-func (mr *MockDurableRepoMockRecorder) UpsertMembership(ctx, membership any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertMembership", reflect.TypeOf((*MockDurableRepo)(nil).UpsertMembership), ctx, membership)
 }
 
 // MockCacheRepo is a mock of CacheRepo interface.
@@ -197,6 +197,21 @@ func (m *MockCacheRepo) AddToExpiryTimer(ctx context.Context, productID, userID 
 func (mr *MockCacheRepoMockRecorder) AddToExpiryTimer(ctx, productID, userID, expiresAt any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddToExpiryTimer", reflect.TypeOf((*MockCacheRepo)(nil).AddToExpiryTimer), ctx, productID, userID, expiresAt)
+}
+
+// ClaimJoin mocks base method.
+func (m *MockCacheRepo) ClaimJoin(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ClaimJoin", ctx, productID, userID, ttl)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ClaimJoin indicates an expected call of ClaimJoin.
+func (mr *MockCacheRepoMockRecorder) ClaimJoin(ctx, productID, userID, ttl any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimJoin", reflect.TypeOf((*MockCacheRepo)(nil).ClaimJoin), ctx, productID, userID, ttl)
 }
 
 // CommitPurchase mocks base method.
@@ -380,6 +395,20 @@ func (m *MockCacheRepo) RefreshExpiryTimer(ctx context.Context, productID, userI
 func (mr *MockCacheRepoMockRecorder) RefreshExpiryTimer(ctx, productID, userID, expiresAt any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshExpiryTimer", reflect.TypeOf((*MockCacheRepo)(nil).RefreshExpiryTimer), ctx, productID, userID, expiresAt)
+}
+
+// ReleaseJoinClaim mocks base method.
+func (m *MockCacheRepo) ReleaseJoinClaim(ctx context.Context, productID, userID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseJoinClaim", ctx, productID, userID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleaseJoinClaim indicates an expected call of ReleaseJoinClaim.
+func (mr *MockCacheRepoMockRecorder) ReleaseJoinClaim(ctx, productID, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseJoinClaim", reflect.TypeOf((*MockCacheRepo)(nil).ReleaseJoinClaim), ctx, productID, userID)
 }
 
 // RemoveFromExpiryTimer mocks base method.

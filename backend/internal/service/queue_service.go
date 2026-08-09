@@ -47,6 +47,45 @@ func NewQueueService(
 	}
 }
 
+// joinClaimTTL bounds how long one entry attempt may hold the claim. It only has
+// to outlive a normal JoinQueue call; a crashed process releases the user by
+// expiry rather than locking them out.
+const joinClaimTTL = 5 * time.Second
+
+// joinAwaitAttempts and joinAwaitDelay define how long a losing request waits for
+// the winner to finish.
+const (
+	joinAwaitAttempts = 20
+	joinAwaitDelay    = 25 * time.Millisecond
+)
+
+// awaitConcurrentJoin serves the request that lost the claim. Rather than failing,
+// it waits for the winner to publish the membership and returns it, which is what
+// keeps POST idempotent under a double click (docs/design_context.md, п. 2.1).
+func (s *QueueService) awaitConcurrentJoin(
+	ctx context.Context, productID, userID string,
+) (*models.QueueMembership, *models.Right, error) {
+	for attempt := 0; attempt < joinAwaitAttempts; attempt++ {
+		mem, right, isHandled, err := s.checkIdempotency(ctx, productID, userID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("service.JoinQueue await: %w", err)
+		}
+		if isHandled {
+			return mem, right, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(joinAwaitDelay):
+		}
+	}
+
+	// The winner neither finished nor left a membership behind. Reporting a
+	// conflict is honest: the client may retry, and the claim has a TTL.
+	return nil, nil, models.ErrConcurrentJoin
+}
+
 // JoinQueue acts as the entry point for users requesting to buy a product.
 func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, quantity int) (*models.QueueMembership, *models.Right, error) {
 	log := logger.FromContext(ctx)
@@ -56,6 +95,33 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 	}
 
 	mem, right, isHandled, errIdemp := s.checkIdempotency(ctx, productID, userID)
+	if errIdemp != nil {
+		return nil, nil, fmt.Errorf("service.JoinQueue: %w", errIdemp)
+	}
+	if isHandled {
+		return mem, right, nil
+	}
+
+	// The idempotency check above reads state and decides to create a new
+	// membership, but between those two moments nothing stops a second request
+	// from doing exactly the same. Without a claim, N parallel requests from one
+	// user each allocate their own units and walk away with N rights.
+	won, errClaim := s.cache.ClaimJoin(ctx, productID, userID, joinClaimTTL)
+	if errClaim != nil {
+		return nil, nil, fmt.Errorf("service.JoinQueue claim: %w", errClaim)
+	}
+	if !won {
+		return s.awaitConcurrentJoin(ctx, productID, userID)
+	}
+	defer func() {
+		if errRelease := s.cache.ReleaseJoinClaim(context.WithoutCancel(ctx), productID, userID); errRelease != nil {
+			log.WarnContext(ctx, "failed to release join claim", slog.Any("error", errRelease))
+		}
+	}()
+
+	// State may have changed while waiting for the claim, so the idempotency
+	// check is repeated — this time under exclusive access.
+	mem, right, isHandled, errIdemp = s.checkIdempotency(ctx, productID, userID)
 	if errIdemp != nil {
 		return nil, nil, fmt.Errorf("service.JoinQueue: %w", errIdemp)
 	}
