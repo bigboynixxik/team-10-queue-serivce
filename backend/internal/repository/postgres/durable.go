@@ -112,9 +112,9 @@ func (dr *DurableRepo) UpsertMembership(ctx context.Context, membership *models.
 	return nil
 }
 
-// UseRightTx atomically transitions an ACTIVE right to USED and decrements
-// product_stock by the quantity stored in PostgreSQL. The row lock makes
-// concurrent payment webhooks idempotent.
+// UseRightTx atomically transitions an ACTIVE right to USED, decrements
+// product_stock, and finalizes the matching membership if it still owns the
+// same token. The row lock makes duplicate payment webhooks idempotent.
 func (dr *DurableRepo) UseRightTx(
 	ctx context.Context,
 	token string,
@@ -140,6 +140,9 @@ func (dr *DurableRepo) UseRightTx(
 
 	switch right.Status {
 	case models.RightStatusUsed:
+		if right.OrderID == nil || *right.OrderID != orderID {
+			return nil, false, models.ErrTokenUsed
+		}
 		return right, false, nil
 	case models.RightStatusExpired:
 		return nil, false, models.ErrTokenExpired
@@ -192,6 +195,27 @@ func (dr *DurableRepo) UseRightTx(
 	}
 	if result.RowsAffected() != 1 {
 		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx stock depleted: %w", models.ErrStockDepleted)
+	}
+
+	queryMembership, argsMembership, err := dr.sq.Update("queue_memberships").
+		Set("status", models.MembershipStatusPurchased).
+		Set("available_quantity", nil).
+		Set("current_token", nil).
+		Set("expires_at", nil).
+		Set("updated_at", now).
+		Where(sq.Eq{
+			"product_id":    right.ProductID,
+			"user_id":       right.UserID,
+			"status":        models.MembershipStatusRightActive,
+			"current_token": token,
+		}).
+		ToSql()
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx membership query build: %w", err)
+	}
+
+	if _, err = tx.Exec(ctx, queryMembership, argsMembership...); err != nil {
+		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx membership execute: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

@@ -303,6 +303,111 @@ func (s *CacheTestSuite) TestMembership_SetAndGet_WithNils() {
 	require.ErrorIs(s.T(), err, models.ErrTokenNotFound)
 }
 
+func (s *CacheTestSuite) TestMarkPurchasedIfCurrentToken_MatchingTokenUpdatesMembershipAndTimer() {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	token := "tok-paid"
+	expiresAt := now.Add(time.Minute)
+	available := 1
+
+	err := s.repo.SetMembership(s.ctx, &models.QueueMembership{
+		ProductID:         "prod-paid",
+		UserID:            "user-paid",
+		Status:            models.MembershipStatusRightActive,
+		Quantity:          1,
+		AvailableQuantity: &available,
+		CurrentToken:      &token,
+		ExpiresAt:         &expiresAt,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.AddToExpiryTimer(s.ctx, "prod-paid", "user-paid", expiresAt)
+	require.NoError(s.T(), err)
+
+	pubsub := s.client.Subscribe(s.ctx, "updates:prod-paid:user-paid")
+	defer func() {
+		require.NoError(s.T(), pubsub.Close())
+	}()
+	_, err = pubsub.Receive(s.ctx)
+	require.NoError(s.T(), err)
+
+	applied, err := s.repo.MarkPurchasedIfCurrentToken(s.ctx, &models.Right{
+		Token:     token,
+		ProductID: "prod-paid",
+		UserID:    "user-paid",
+	}, now.Add(time.Second))
+	require.NoError(s.T(), err)
+	require.True(s.T(), applied)
+
+	fetched, err := s.repo.GetMembership(s.ctx, "prod-paid", "user-paid")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.MembershipStatusPurchased, fetched.Status)
+	require.Nil(s.T(), fetched.AvailableQuantity)
+	require.Nil(s.T(), fetched.CurrentToken)
+	require.Nil(s.T(), fetched.ExpiresAt)
+
+	_, err = s.client.ZScore(s.ctx, "expiring:rights", "prod-paid:user-paid").Result()
+	require.ErrorIs(s.T(), err, redis.Nil)
+
+	select {
+	case msg := <-pubsub.Channel():
+		var payload map[string]string
+		err = json.Unmarshal([]byte(msg.Payload), &payload)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), "PURCHASED", payload["status"])
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timeout waiting for purchase event")
+	}
+}
+
+func (s *CacheTestSuite) TestMarkPurchasedIfCurrentToken_StaleTokenLeavesMembershipAndTimer() {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	newToken := "new-token"
+	expiresAt := now.Add(time.Minute)
+
+	err := s.repo.SetMembership(s.ctx, &models.QueueMembership{
+		ProductID:    "prod-stale",
+		UserID:       "user-stale",
+		Status:       models.MembershipStatusRightActive,
+		Quantity:     1,
+		CurrentToken: &newToken,
+		ExpiresAt:    &expiresAt,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.AddToExpiryTimer(s.ctx, "prod-stale", "user-stale", expiresAt)
+	require.NoError(s.T(), err)
+
+	applied, err := s.repo.MarkPurchasedIfCurrentToken(s.ctx, &models.Right{
+		Token:     "old-token",
+		ProductID: "prod-stale",
+		UserID:    "user-stale",
+	}, now.Add(time.Second))
+	require.NoError(s.T(), err)
+	require.False(s.T(), applied)
+
+	fetched, err := s.repo.GetMembership(s.ctx, "prod-stale", "user-stale")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.MembershipStatusRightActive, fetched.Status)
+	require.Equal(s.T(), newToken, *fetched.CurrentToken)
+	require.NotNil(s.T(), fetched.ExpiresAt)
+
+	score, err := s.client.ZScore(s.ctx, "expiring:rights", "prod-stale:user-stale").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(expiresAt.Unix()), score)
+}
+
+func (s *CacheTestSuite) TestMarkPurchasedIfCurrentToken_MissingMembershipReturnsFalse() {
+	applied, err := s.repo.MarkPurchasedIfCurrentToken(s.ctx, &models.Right{
+		Token:     "ghost-token",
+		ProductID: "ghost-product",
+		UserID:    "ghost-user",
+	}, time.Now().UTC())
+	require.NoError(s.T(), err)
+	require.False(s.T(), applied)
+}
+
 func (s *CacheTestSuite) TestRight_SetAndGet() {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 

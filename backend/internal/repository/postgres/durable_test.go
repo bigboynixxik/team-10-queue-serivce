@@ -221,6 +221,20 @@ func (s *RepoTestSuite) TestUseRightTx() {
 	})
 	require.NoError(s.T(), err)
 
+	token := "token-pay"
+	err = s.repo.UpsertMembership(s.ctx, &models.QueueMembership{
+		ProductID:         "prod-1",
+		UserID:            "u1",
+		Status:            models.MembershipStatusRightActive,
+		Quantity:          2,
+		AvailableQuantity: ptr(2),
+		CurrentToken:      &token,
+		ExpiresAt:         ptr(now.Add(time.Minute)),
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	})
+	require.NoError(s.T(), err)
+
 	right, transitioned, err := s.repo.UseRightTx(s.ctx, "token-pay", "order-777", now)
 	require.NoError(s.T(), err)
 	require.True(s.T(), transitioned)
@@ -233,6 +247,81 @@ func (s *RepoTestSuite) TestUseRightTx() {
 	err = s.pool.QueryRow(s.ctx, `SELECT product_count FROM product_stock WHERE product_id=$1`, "prod-1").Scan(&count)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 3, count)
+
+	var status models.MembershipStatus
+	var currentTokenIsNull, expiresAtIsNull, availableQuantityIsNull bool
+	err = s.pool.QueryRow(s.ctx, `
+		SELECT status, current_token IS NULL, expires_at IS NULL, available_quantity IS NULL
+		FROM queue_memberships WHERE product_id=$1 AND user_id=$2
+	`, "prod-1", "u1").Scan(&status, &currentTokenIsNull, &expiresAtIsNull, &availableQuantityIsNull)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.MembershipStatusPurchased, status)
+	require.True(s.T(), currentTokenIsNull)
+	require.True(s.T(), expiresAtIsNull)
+	require.True(s.T(), availableQuantityIsNull)
+}
+
+func (s *RepoTestSuite) TestUseRightTx_UsedRightRejectsDifferentOrder() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "token-order", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	})
+	require.NoError(s.T(), err)
+
+	_, transitioned, err := s.repo.UseRightTx(s.ctx, "token-order", "order-1", now)
+	require.NoError(s.T(), err)
+	require.True(s.T(), transitioned)
+
+	_, transitioned, err = s.repo.UseRightTx(s.ctx, "token-order", "order-2", now)
+	require.ErrorIs(s.T(), err, models.ErrTokenUsed)
+	require.False(s.T(), transitioned)
+}
+
+func (s *RepoTestSuite) TestUseRightTx_DoesNotOverwriteNewMembershipToken() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "old-token", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	})
+	require.NoError(s.T(), err)
+
+	newToken := "new-token"
+	err = s.repo.UpsertMembership(s.ctx, &models.QueueMembership{
+		ProductID:    "prod-1",
+		UserID:       "u1",
+		Status:       models.MembershipStatusRightActive,
+		Quantity:     1,
+		CurrentToken: &newToken,
+		ExpiresAt:    ptr(now.Add(2 * time.Minute)),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+	require.NoError(s.T(), err)
+
+	_, transitioned, err := s.repo.UseRightTx(s.ctx, "old-token", "order-old", now)
+	require.NoError(s.T(), err)
+	require.True(s.T(), transitioned)
+
+	var status models.MembershipStatus
+	var currentToken string
+	var hasExpiresAt bool
+	err = s.pool.QueryRow(s.ctx, `
+		SELECT status, current_token, expires_at IS NOT NULL
+		FROM queue_memberships WHERE product_id=$1 AND user_id=$2
+	`, "prod-1", "u1").Scan(&status, &currentToken, &hasExpiresAt)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.MembershipStatusRightActive, status)
+	require.Equal(s.T(), newToken, currentToken)
+	require.True(s.T(), hasExpiresAt)
 }
 
 // TestUseRightTx_StockDepleted verifies that both Right and stock roll back together.
@@ -322,7 +411,7 @@ func (s *RepoTestSuite) TestUseRightTx_ConcurrentWebhooksTransitionOnce() {
 			defer wg.Done()
 			<-start
 
-			right, transitioned, useErr := s.repo.UseRightTx(s.ctx, "token-race", fmt.Sprintf("order-%d", index), now)
+			right, transitioned, useErr := s.repo.UseRightTx(s.ctx, "token-race", "order-race", now)
 			if useErr != nil {
 				errCh <- useErr
 				return

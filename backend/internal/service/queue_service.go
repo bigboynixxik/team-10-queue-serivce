@@ -792,32 +792,12 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 		}
 	}
 
-	mem, errMem := s.cache.GetMembership(ctx, right.ProductID, right.UserID)
-	if errMem == nil {
-		if mem.Status != models.MembershipStatusPurchased {
-			mem.Status = models.MembershipStatusPurchased
-			mem.AvailableQuantity = nil
-			mem.CurrentToken = nil
-			mem.ExpiresAt = nil
-			mem.UpdatedAt = now
+	if errCacheRight := s.cache.SetRight(ctx, right); errCacheRight != nil {
+		log.ErrorContext(ctx, "failed to refresh used right cache", slog.Any("error", errCacheRight))
+	}
 
-			if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
-				log.ErrorContext(ctx, "failed to upsert final purchased membership", slog.Any("error", errUpsert))
-			}
-
-			s.syncCacheState(ctx, mem, right)
-		} else if errCacheRight := s.cache.SetRight(ctx, right); errCacheRight != nil {
-			log.ErrorContext(ctx, "failed to refresh used right cache", slog.Any("error", errCacheRight))
-		}
-
-		if errRemove := s.cache.RemoveFromExpiryTimer(ctx, right.ProductID, right.UserID); errRemove != nil {
-			log.ErrorContext(ctx, "failed to remove from expiry timer", slog.Any("error", errRemove))
-		}
-	} else {
-		log.ErrorContext(ctx, "failed to fetch membership for purchased right", slog.Any("error", errMem))
-		if errCacheRight := s.cache.SetRight(ctx, right); errCacheRight != nil {
-			log.ErrorContext(ctx, "failed to sync right cache independently", slog.Any("error", errCacheRight))
-		}
+	if _, errCacheMembership := s.cache.MarkPurchasedIfCurrentToken(ctx, right, now); errCacheMembership != nil {
+		log.ErrorContext(ctx, "failed to mark cached membership as purchased", slog.Any("error", errCacheMembership))
 	}
 
 	if transitioned {

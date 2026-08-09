@@ -222,6 +222,29 @@ var (
 		return 1
 	`)
 
+	markPurchasedIfCurrentTokenScript = redis.NewScript(`
+		local currentToken = redis.call('HGET', KEYS[1], 'current_token')
+		if currentToken ~= ARGV[1] then
+			return 0
+		end
+
+		local status = redis.call('HGET', KEYS[1], 'status')
+		if status ~= 'RIGHT_ACTIVE' then
+			return 0
+		end
+
+		redis.call('HSET', KEYS[1],
+			'status', 'PURCHASED',
+			'available_quantity', '',
+			'current_token', '',
+			'expires_at', '',
+			'updated_at', ARGV[2]
+		)
+		redis.call('ZREM', KEYS[2], ARGV[3])
+		redis.call('PUBLISH', KEYS[3], cjson.encode({status = 'PURCHASED'}))
+		return 1
+	`)
+
 	popAndAllocateScript = redis.NewScript(`
 		local queueKey = KEYS[1]
 		local stockKey = KEYS[2]
@@ -431,6 +454,36 @@ func (c *CacheRepo) GetMembership(ctx context.Context, productID string, userID 
 	}
 
 	return membership, nil
+}
+
+// MarkPurchasedIfCurrentToken finalizes a cached membership only while the
+// membership still points at the paid token. The membership update and timer
+// removal are atomic, so an old webhook cannot delete a newer right timer.
+func (c *CacheRepo) MarkPurchasedIfCurrentToken(
+	ctx context.Context,
+	right *models.Right,
+	updatedAt time.Time,
+) (bool, error) {
+	membershipKey := fmt.Sprintf("member:%s:%s", right.ProductID, right.UserID)
+	timerMember := fmt.Sprintf("%s:%s", right.ProductID, right.UserID)
+
+	applied, err := markPurchasedIfCurrentTokenScript.Run(
+		ctx,
+		c.client,
+		[]string{
+			membershipKey,
+			"expiring:rights",
+			userUpdatesChannel(right.ProductID, right.UserID),
+		},
+		right.Token,
+		updatedAt.Format(time.RFC3339Nano),
+		timerMember,
+	).Int()
+	if err != nil {
+		return false, fmt.Errorf("redis.CacheRepo.MarkPurchasedIfCurrentToken: %w", err)
+	}
+
+	return applied == 1, nil
 }
 
 // SetRight caches an issued right for fast validation before checkout.

@@ -32,30 +32,12 @@ func usedRight(token, orderID string) *models.Right {
 
 func (s *QueueServiceTestSuite) TestProcessPayment_Success() {
 	right := usedRight("token-1", "order-1")
-	token := right.Token
-	expiresAt := right.ExpiresAt
-	mem := &models.QueueMembership{
-		ProductID:    "prod-1",
-		UserID:       "user-1",
-		Status:       models.MembershipStatusRightActive,
-		Quantity:     1,
-		CurrentToken: &token,
-		ExpiresAt:    &expiresAt,
-	}
 
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-1", "order-1", gomock.Any()).Return(right, true, nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
 	s.mockAvito.EXPECT().DecrementStock(s.ctx, "prod-1", 1).Return(nil)
-	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
-	s.mockDurable.EXPECT().UpsertMembership(s.ctx, gomock.Cond(func(value any) bool {
-		membership, ok := value.(*models.QueueMembership)
-		return ok && membership.Status == models.MembershipStatusPurchased &&
-			membership.CurrentToken == nil && membership.ExpiresAt == nil
-	})).Return(nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
-	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
-	s.mockCache.EXPECT().PublishEvent(s.ctx, "prod-1", "user-1", map[string]string{"status": "PURCHASED"}).Return(nil)
-	s.mockCache.EXPECT().RemoveFromExpiryTimer(s.ctx, "prod-1", "user-1").Return(nil)
+	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(true, nil)
 	s.mockAdvanceQueueExit("prod-1")
 
 	err := s.srv.ProcessPayment(s.ctx, "token-1", "order-1")
@@ -65,16 +47,10 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Success() {
 
 func (s *QueueServiceTestSuite) TestProcessPayment_DuplicateDoesNotRepeatStockSideEffects() {
 	right := usedRight("token-used", "order-1")
-	mem := &models.QueueMembership{
-		ProductID: "prod-1",
-		UserID:    "user-1",
-		Status:    models.MembershipStatusPurchased,
-	}
 
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-used", "order-1", gomock.Any()).Return(right, false, nil)
-	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
-	s.mockCache.EXPECT().RemoveFromExpiryTimer(s.ctx, "prod-1", "user-1").Return(nil)
+	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(false, nil)
 
 	err := s.srv.ProcessPayment(s.ctx, "token-used", "order-1")
 
@@ -83,27 +59,26 @@ func (s *QueueServiceTestSuite) TestProcessPayment_DuplicateDoesNotRepeatStockSi
 
 func (s *QueueServiceTestSuite) TestProcessPayment_DuplicateRepairsMembership() {
 	right := usedRight("token-used", "order-1")
-	token := right.Token
-	mem := &models.QueueMembership{
-		ProductID:    "prod-1",
-		UserID:       "user-1",
-		Status:       models.MembershipStatusRightActive,
-		CurrentToken: &token,
-	}
 
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-used", "order-1", gomock.Any()).Return(right, false, nil)
-	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
-	s.mockDurable.EXPECT().UpsertMembership(s.ctx, gomock.Any()).Return(nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
-	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
-	s.mockCache.EXPECT().PublishEvent(s.ctx, "prod-1", "user-1", gomock.Any()).Return(nil)
-	s.mockCache.EXPECT().RemoveFromExpiryTimer(s.ctx, "prod-1", "user-1").Return(nil)
+	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(true, nil)
 
 	err := s.srv.ProcessPayment(s.ctx, "token-used", "order-1")
 
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), models.MembershipStatusPurchased, mem.Status)
-	require.Nil(s.T(), mem.CurrentToken)
+}
+
+func (s *QueueServiceTestSuite) TestProcessPayment_StaleWebhookDoesNotReplaceCurrentMembership() {
+	right := usedRight("old-token", "order-old")
+
+	s.mockDurable.EXPECT().UseRightTx(s.ctx, "old-token", "order-old", gomock.Any()).Return(right, false, nil)
+	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
+	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(false, nil)
+
+	err := s.srv.ProcessPayment(s.ctx, "old-token", "order-old")
+
+	require.NoError(s.T(), err)
 }
 
 func (s *QueueServiceTestSuite) TestProcessPayment_NotFound() {
@@ -130,14 +105,14 @@ func (s *QueueServiceTestSuite) TestProcessPayment_StockDepleted() {
 	require.ErrorIs(s.T(), err, models.ErrStockDepleted)
 }
 
-func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_MembershipFetchFails() {
+func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_MembershipCacheUpdateFails() {
 	right := usedRight("token-6", "order-6")
 
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-6", "order-6", gomock.Any()).Return(right, true, nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
 	s.mockAvito.EXPECT().DecrementStock(s.ctx, "prod-1", 1).Return(nil)
-	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(nil, errors.New("cache offline"))
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
+	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(false, errors.New("cache offline"))
 	s.mockAdvanceQueueExit("prod-1")
 
 	err := s.srv.ProcessPayment(s.ctx, "token-6", "order-6")
@@ -147,17 +122,12 @@ func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_MembershipFetchFails
 
 func (s *QueueServiceTestSuite) TestProcessPayment_Degraded_AdvanceQueueFails() {
 	right := usedRight("token-7", "order-7")
-	mem := &models.QueueMembership{ProductID: "prod-1", UserID: "user-1", Status: models.MembershipStatusRightActive}
 
 	s.mockDurable.EXPECT().UseRightTx(s.ctx, "token-7", "order-7", gomock.Any()).Return(right, true, nil)
 	s.mockCache.EXPECT().CommitPurchase(gomock.Any(), "prod-1", 1).Return(nil)
 	s.mockAvito.EXPECT().DecrementStock(s.ctx, "prod-1", 1).Return(nil)
-	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
-	s.mockDurable.EXPECT().UpsertMembership(s.ctx, gomock.Any()).Return(nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, right).Return(nil)
-	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
-	s.mockCache.EXPECT().PublishEvent(s.ctx, "prod-1", "user-1", gomock.Any()).Return(nil)
-	s.mockCache.EXPECT().RemoveFromExpiryTimer(s.ctx, "prod-1", "user-1").Return(nil)
+	s.mockCache.EXPECT().MarkPurchasedIfCurrentToken(s.ctx, right, gomock.Any()).Return(true, nil)
 	s.mockCache.EXPECT().PopAndAllocate(gomock.Any(), "prod-1").
 		Return("", 0, 0, false, models.MembershipStatus(""), 0.0, errors.New("lua script timeout"))
 

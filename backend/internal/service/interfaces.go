@@ -22,9 +22,10 @@ type DurableRepo interface {
 	// It handles (product_id, user_id) conflicts gracefully.
 	UpsertMembership(ctx context.Context, membership *models.QueueMembership) error
 
-	// UseRightTx atomically locks an ACTIVE right, marks it as USED, and decrements
-	// product_stock using the quantity stored with the right. transitioned is false
-	// for an already processed webhook, so external side effects are not repeated.
+	// UseRightTx atomically locks an ACTIVE right, marks it as USED, decrements
+	// product_stock, and finalizes the matching membership when it still owns
+	// this token. transitioned is false for an already processed webhook, so
+	// external side effects are not repeated.
 	UseRightTx(ctx context.Context, token string, orderID string, now time.Time) (right *models.Right, transitioned bool, err error)
 
 	// ExpireRightAndUpsertMembershipTx atomically marks an ACTIVE right as EXPIRED
@@ -66,6 +67,10 @@ type CacheRepo interface {
 
 	// GetMembership retrieves the cached state of a user.
 	GetMembership(ctx context.Context, productID string, userID string) (*models.QueueMembership, error)
+
+	// MarkPurchasedIfCurrentToken finalizes the cached membership only when it
+	// still points at the paid right token.
+	MarkPurchasedIfCurrentToken(ctx context.Context, right *models.Right, updatedAt time.Time) (bool, error)
 
 	// SetRight caches an issued right for fast validation before checkout.
 	SetRight(ctx context.Context, right *models.Right) error

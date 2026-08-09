@@ -301,6 +301,21 @@ func (mr *MockCacheRepoMockRecorder) GetMembership(ctx, productID, userID any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMembership", reflect.TypeOf((*MockCacheRepo)(nil).GetMembership), ctx, productID, userID)
 }
 
+// MarkPurchasedIfCurrentToken mocks base method.
+func (m *MockCacheRepo) MarkPurchasedIfCurrentToken(ctx context.Context, right *models.Right, updatedAt time.Time) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkPurchasedIfCurrentToken", ctx, right, updatedAt)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// MarkPurchasedIfCurrentToken indicates an expected call of MarkPurchasedIfCurrentToken.
+func (mr *MockCacheRepoMockRecorder) MarkPurchasedIfCurrentToken(ctx, right, updatedAt any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkPurchasedIfCurrentToken", reflect.TypeOf((*MockCacheRepo)(nil).MarkPurchasedIfCurrentToken), ctx, right, updatedAt)
+}
+
 // GetQueueMetrics mocks base method.
 func (m *MockCacheRepo) GetQueueMetrics(ctx context.Context, productID, userID string) (int, int, error) {
 	m.ctrl.T.Helper()
