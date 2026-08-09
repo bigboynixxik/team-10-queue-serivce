@@ -11,7 +11,7 @@ import (
 // TestProcessExpirations_Empty verifies that an empty expiration set
 // terminates early without invoking storage or queue advancement operations.
 func (s *QueueServiceTestSuite) TestProcessExpirations_Empty() {
-	s.mockCache.EXPECT().GetAndRemoveExpired(s.ctx, gomock.Any()).Return([]string{}, nil)
+	s.expectExpirationClaim([]string{}, nil)
 
 	err := s.srv.ProcessExpirations(s.ctx)
 
@@ -21,7 +21,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_Empty() {
 // TestProcessExpirations_OfferPending verifies that an expired partial offer
 // restores available units, updates the membership status, and advances the queue.
 func (s *QueueServiceTestSuite) TestProcessExpirations_OfferPending() {
-	s.mockCache.EXPECT().GetAndRemoveExpired(s.ctx, gomock.Any()).Return([]string{"prod-1:user-1"}, nil)
+	s.expectExpirationClaim([]string{"prod-1:user-1"}, nil)
 
 	mem := &models.QueueMembership{
 		ProductID:         "prod-1",
@@ -50,7 +50,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_OfferPending() {
 // TestProcessExpirations_RightActive verifies that an expired payment right
 // restores full product quantity, updates status, and advances the queue.
 func (s *QueueServiceTestSuite) TestProcessExpirations_RightActive() {
-	s.mockCache.EXPECT().GetAndRemoveExpired(s.ctx, gomock.Any()).Return([]string{"prod-1:user-1"}, nil)
+	s.expectExpirationClaim([]string{"prod-1:user-1"}, nil)
 
 	token := "right-token"
 	mem := &models.QueueMembership{
@@ -86,7 +86,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_RightActive() {
 
 // belonging to different products correctly route stock restoration and queue advancement per product.
 func (s *QueueServiceTestSuite) TestProcessExpirations_MultipleProducts() {
-	s.mockCache.EXPECT().GetAndRemoveExpired(s.ctx, gomock.Any()).Return([]string{"prod-1:user-1", "prod-2:user-2"}, nil)
+	s.expectExpirationClaim([]string{"prod-1:user-1", "prod-2:user-2"}, nil)
 
 	mem1 := &models.QueueMembership{
 		ProductID:         "prod-1",
@@ -123,7 +123,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_MultipleProducts() {
 // TestProcessExpirations_MalformedKey verifies that corrupt or improperly formatted
 // keys in the expiration index are safely ignored without crashing the worker.
 func (s *QueueServiceTestSuite) TestProcessExpirations_MalformedKey() {
-	s.mockCache.EXPECT().GetAndRemoveExpired(s.ctx, gomock.Any()).Return([]string{"malformedkeywithoutcolon"}, nil)
+	s.expectExpirationClaim([]string{"malformedkeywithoutcolon"}, nil)
 
 	err := s.srv.ProcessExpirations(s.ctx)
 
@@ -133,7 +133,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_MalformedKey() {
 // TestProcessExpirations_AlreadyHandled verifies that users who already completed
 // their purchase are skipped during the expiration sweep.
 func (s *QueueServiceTestSuite) TestProcessExpirations_AlreadyHandled() {
-	s.mockCache.EXPECT().GetAndRemoveExpired(s.ctx, gomock.Any()).Return([]string{"prod-1:user-1"}, nil)
+	s.expectExpirationClaim([]string{"prod-1:user-1"}, nil)
 
 	mem := &models.QueueMembership{
 		ProductID: "prod-1",
@@ -151,17 +151,21 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_AlreadyHandled() {
 // TestProcessExpirations_MembershipFetchError verifies that temporary infrastructure
 // errors when fetching user details are safely caught, allowing the loop to continue.
 func (s *QueueServiceTestSuite) TestProcessExpirations_MembershipFetchError() {
-	s.mockCache.EXPECT().GetAndRemoveExpired(s.ctx, gomock.Any()).Return([]string{"prod-1:user-1"}, nil)
+	s.expectExpirationClaim([]string{"prod-1:user-1"}, nil)
 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(nil, errors.New("timeout"))
-	s.mockCache.EXPECT().AddToExpiryTimer(s.ctx, "prod-1", "user-1", gomock.Any()).Return(nil)
+	// The item is not acknowledged: it goes back to the schedule so the next pass
+	// retries it once the cache recovers.
+	s.mockCache.EXPECT().
+		NackExpired(gomock.Any(), []string{"prod-1:user-1"}, gomock.Any()).
+		Return(nil)
 
 	err := s.srv.ProcessExpirations(s.ctx)
 
 	require.NoError(s.T(), err)
 }
 func (s *QueueServiceTestSuite) TestProcessExpirations_PaymentWonRace() {
-	s.mockCache.EXPECT().GetAndRemoveExpired(s.ctx, gomock.Any()).Return([]string{"prod-1:user-1"}, nil)
+	s.expectExpirationClaim([]string{"prod-1:user-1"}, nil)
 
 	token := "right-token"
 	mem := &models.QueueMembership{
@@ -188,7 +192,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_PaymentWonRace() {
 	require.NoError(s.T(), err)
 }
 func (s *QueueServiceTestSuite) TestProcessExpirations_RightTransactionErrorIsRescheduled() {
-	s.mockCache.EXPECT().GetAndRemoveExpired(s.ctx, gomock.Any()).Return([]string{"prod-1:user-1"}, nil)
+	s.expectExpirationClaim([]string{"prod-1:user-1"}, nil)
 
 	token := "right-token"
 	mem := &models.QueueMembership{
@@ -201,7 +205,9 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_RightTransactionErrorIsRe
 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
 	s.mockDurable.EXPECT().ExpireRightAndUpsertMembershipTx(s.ctx, token, gomock.Any()).Return(nil, false, errors.New("postgres unavailable"))
-	s.mockCache.EXPECT().AddToExpiryTimer(s.ctx, "prod-1", "user-1", gomock.Any()).Return(nil)
+	s.mockCache.EXPECT().
+		NackExpired(gomock.Any(), []string{"prod-1:user-1"}, gomock.Any()).
+		Return(nil)
 
 	err := s.srv.ProcessExpirations(s.ctx)
 

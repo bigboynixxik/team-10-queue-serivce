@@ -118,3 +118,14 @@ func ptr[T any](v T) *T {
 func TestQueueServiceSuite(t *testing.T) {
 	suite.Run(t, new(QueueServiceTestSuite))
 }
+
+// expectExpirationClaim sets up one pass of the expiration worker: reclaiming
+// abandoned work and claiming what is due. Acknowledgement is allowed rather than
+// required; a failed item must be nacked explicitly by the test that expects it.
+func (s *QueueServiceTestSuite) expectExpirationClaim(keys []string, err error) {
+	s.mockCache.EXPECT().ReclaimStaleExpired(gomock.Any(), gomock.Any()).Return(0, nil).AnyTimes()
+	s.mockCache.EXPECT().
+		ClaimExpired(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(keys, err)
+	s.mockCache.EXPECT().AckExpired(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+}
