@@ -367,6 +367,21 @@ func (mr *MockCacheRepoMockRecorder) PublishEvent(ctx, productID, userID, payloa
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishEvent", reflect.TypeOf((*MockCacheRepo)(nil).PublishEvent), ctx, productID, userID, payload)
 }
 
+// RefreshExpiryTimer mocks base method.
+func (m *MockCacheRepo) RefreshExpiryTimer(ctx context.Context, productID, userID string, expiresAt time.Time) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RefreshExpiryTimer", ctx, productID, userID, expiresAt)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RefreshExpiryTimer indicates an expected call of RefreshExpiryTimer.
+func (mr *MockCacheRepoMockRecorder) RefreshExpiryTimer(ctx, productID, userID, expiresAt any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshExpiryTimer", reflect.TypeOf((*MockCacheRepo)(nil).RefreshExpiryTimer), ctx, productID, userID, expiresAt)
+}
+
 // RemoveFromExpiryTimer mocks base method.
 func (m *MockCacheRepo) RemoveFromExpiryTimer(ctx context.Context, productID, userID string) error {
 	m.ctrl.T.Helper()

@@ -14,8 +14,7 @@ type QueueService interface {
 	// or immediately issuing an offer/right depending on stock availability.
 	JoinQueue(ctx context.Context, productID, userID string, quantity int) (*models.QueueMembership, *models.Right, error)
 
-	// GetMembership returns the user's current state in the queue. It serves both
-	// the polling read and every push of the realtime channel.
+	// GetMembership returns the user's current state in the queue.
 	GetMembership(ctx context.Context, productID, userID string) (*models.QueueMembership, error)
 
 	// GetQueueStats reports public demand for a product: how many people wait,
@@ -54,4 +53,18 @@ type QueueService interface {
 	// CalculateETA computes the user's human-readable position in the queue (1-indexed)
 	// and the estimated wait time in seconds before they receive an offer or right.
 	CalculateETA(ctx context.Context, productID string, userID string) (position int, etaSeconds time.Duration, err error)
+
+	// RefreshRightHeartbeat confirms that the holder of an active purchase right
+	// still has a live WebSocket connection.
+	RefreshRightHeartbeat(ctx context.Context, productID string, userID string) error
+}
+
+// RealtimeSubscriber provides transport-level invalidation signals without
+// exposing Redis-specific Pub/Sub types to the WebSocket handler.
+type RealtimeSubscriber interface {
+	SubscribeUpdates(
+		ctx context.Context,
+		productID string,
+		userID string,
+	) (events <-chan struct{}, closeSubscription func() error, err error)
 }

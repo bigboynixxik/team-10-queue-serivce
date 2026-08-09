@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"backend/internal/models"
@@ -22,6 +23,7 @@ var (
 	initStockScript = redis.NewScript(`
 		if redis.call('EXISTS', KEYS[1]) == 0 then
 			redis.call('HSET', KEYS[1], 'product_count', ARGV[1], 'available_units', ARGV[1])
+			redis.call('PUBLISH', KEYS[2], 'changed')
 			return 1
 		end
 		return 0
@@ -40,11 +42,13 @@ var (
 
 		if avail >= reqQty then
 			redis.call('HINCRBY', stockKey, 'available_units', -reqQty)
+			redis.call('PUBLISH', KEYS[2], 'changed')
 			return {reqQty, 0, 0}
 		end
 
 		if avail > 0 then
 			redis.call('HINCRBY', stockKey, 'available_units', -avail)
+			redis.call('PUBLISH', KEYS[2], 'changed')
 			return {0, avail, 0}
 		end
 
@@ -54,7 +58,28 @@ var (
 	enqueueScript = redis.NewScript(`
 		local seq = redis.call('INCR', KEYS[1])
 		redis.call('ZADD', KEYS[2], seq, ARGV[1])
+		redis.call('PUBLISH', KEYS[3], 'changed')
 		return seq
+	`)
+
+	removeFromQueueScript = redis.NewScript(`
+		local removed = redis.call('ZREM', KEYS[1], ARGV[1])
+		if removed > 0 then
+			redis.call('PUBLISH', KEYS[2], 'changed')
+		end
+		return removed
+	`)
+
+	restoreAvailableUnitsScript = redis.NewScript(`
+		redis.call('HINCRBY', KEYS[1], 'available_units', ARGV[1])
+		redis.call('PUBLISH', KEYS[2], 'changed')
+		return 1
+	`)
+
+	requeueScript = redis.NewScript(`
+		redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
+		redis.call('PUBLISH', KEYS[2], 'changed')
+		return 1
 	`)
 
 	getAndRemoveExpiredScript = redis.NewScript(`
@@ -63,6 +88,24 @@ var (
 			redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
 		end
 		return expired
+	`)
+
+	refreshExpiryTimerScript = redis.NewScript(`
+		local current = redis.call('ZSCORE', KEYS[1], ARGV[1])
+		if not current then
+			return 0
+		end
+
+		local deadline = tonumber(ARGV[2])
+		local now = tonumber(ARGV[3])
+		if tonumber(current) <= now then
+			return 0
+		end
+
+		if deadline > tonumber(current) then
+			redis.call('ZADD', KEYS[1], deadline, ARGV[1])
+		end
+		return 1
 	`)
 
 	popAndAllocateScript = redis.NewScript(`
@@ -82,6 +125,7 @@ var (
 		local status = redis.call('HGET', memKey, 'status')
 		if not status or status ~= 'QUEUED' then
 			redis.call('ZREM', queueKey, uid)
+			redis.call('PUBLISH', KEYS[3], 'changed')
 			return {uid, 0, 0, 0, status or "GHOST", score}
 		end
 
@@ -91,18 +135,21 @@ var (
 
 		if count == 0 then
 			redis.call('ZREM', queueKey, uid)
+			redis.call('PUBLISH', KEYS[3], 'changed')
 			return {uid, 0, 0, 1, "SOLD_OUT", score}
 		end
 
 		if avail >= reqQty then
 			redis.call('HINCRBY', stockKey, 'available_units', -reqQty)
 			redis.call('ZREM', queueKey, uid)
+			redis.call('PUBLISH', KEYS[3], 'changed')
 			return {uid, reqQty, 0, 0, "RIGHT_ACTIVE", score}
 		end
 
 		if avail > 0 then
 			redis.call('HINCRBY', stockKey, 'available_units', -avail)
 			redis.call('ZREM', queueKey, uid)
+			redis.call('PUBLISH', KEYS[3], 'changed')
 			return {uid, 0, avail, 0, "OFFER_PENDING", score}
 		end
 
@@ -122,10 +169,18 @@ func NewCacheRepo(client *redis.Client) *CacheRepo {
 	}
 }
 
+func userUpdatesChannel(productID, userID string) string {
+	return fmt.Sprintf("updates:%s:%s", productID, userID)
+}
+
+func queueUpdatesChannel(productID string) string {
+	return fmt.Sprintf("queue-updates:%s", productID)
+}
+
 // InitStock initializes the product stock in the cache if it doesn't already exist.
 func (c *CacheRepo) InitStock(ctx context.Context, productID string, totalStock int) error {
 	key := fmt.Sprintf("stock:%s", productID)
-	err := initStockScript.Run(ctx, c.client, []string{key}, totalStock).Err()
+	err := initStockScript.Run(ctx, c.client, []string{key, queueUpdatesChannel(productID)}, totalStock).Err()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("redis.CacheRepo.InitStock execute script: %w", err)
 	}
@@ -136,7 +191,7 @@ func (c *CacheRepo) InitStock(ctx context.Context, productID string, totalStock 
 func (c *CacheRepo) TryAllocate(ctx context.Context, productID string, quantity int) (int, int, bool, error) {
 	key := fmt.Sprintf("stock:%s", productID)
 
-	res, err := allocateScript.Run(ctx, c.client, []string{key}, quantity).Result()
+	res, err := allocateScript.Run(ctx, c.client, []string{key, queueUpdatesChannel(productID)}, quantity).Result()
 	if err != nil {
 		return 0, 0, false, fmt.Errorf("redis.CacheRepo.TryAllocate execute script: %w", err)
 	}
@@ -168,7 +223,7 @@ func (c *CacheRepo) Enqueue(ctx context.Context, productID string, userID string
 	seqKey := fmt.Sprintf("queue:%s:seq", productID)
 	queueKey := fmt.Sprintf("queue:%s", productID)
 
-	err := enqueueScript.Run(ctx, c.client, []string{seqKey, queueKey}, userID).Err()
+	err := enqueueScript.Run(ctx, c.client, []string{seqKey, queueKey, queueUpdatesChannel(productID)}, userID).Err()
 	if err != nil {
 		return fmt.Errorf("redis.CacheRepo.Enqueue: %w", err)
 	}
@@ -178,7 +233,7 @@ func (c *CacheRepo) Enqueue(ctx context.Context, productID string, userID string
 // RemoveFromQueue completely removes a user from the product's queue.
 func (c *CacheRepo) RemoveFromQueue(ctx context.Context, productID string, userID string) error {
 	queueKey := fmt.Sprintf("queue:%s", productID)
-	err := c.client.ZRem(ctx, queueKey, userID).Err()
+	err := removeFromQueueScript.Run(ctx, c.client, []string{queueKey, queueUpdatesChannel(productID)}, userID).Err()
 	if err != nil {
 		return fmt.Errorf("redis.CacheRepo.RemoveFromQueue: %w", err)
 	}
@@ -326,7 +381,7 @@ func (c *CacheRepo) GetRight(ctx context.Context, token string) (*models.Right, 
 
 // PublishEvent broadcasts a status change to connected WebSocket clients.
 func (c *CacheRepo) PublishEvent(ctx context.Context, productID string, userID string, payload interface{}) error {
-	channel := fmt.Sprintf("updates:%s:%s", productID, userID)
+	channel := userUpdatesChannel(productID, userID)
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -338,6 +393,58 @@ func (c *CacheRepo) PublishEvent(ctx context.Context, productID string, userID s
 		return fmt.Errorf("redis.CacheRepo.PublishEvent publish: %w", err)
 	}
 	return nil
+}
+
+// SubscribeUpdates listens for both user-specific state changes and product-wide
+// queue changes. Events are invalidation signals; consumers should re-read the
+// current membership and queue metrics instead of trusting event payloads.
+func (c *CacheRepo) SubscribeUpdates(
+	ctx context.Context,
+	productID string,
+	userID string,
+) (<-chan struct{}, func() error, error) {
+	pubsub := c.client.Subscribe(ctx, userUpdatesChannel(productID, userID), queueUpdatesChannel(productID))
+	if _, err := pubsub.Receive(ctx); err != nil {
+		_ = pubsub.Close()
+		return nil, nil, fmt.Errorf("redis.CacheRepo.SubscribeUpdates subscribe: %w", err)
+	}
+
+	subscriptionCtx, cancel := context.WithCancel(ctx)
+	messages := pubsub.Channel()
+	events := make(chan struct{})
+
+	var closeOnce sync.Once
+	var closeErr error
+	closeSubscription := func() error {
+		closeOnce.Do(func() {
+			cancel()
+			closeErr = pubsub.Close()
+		})
+		return closeErr
+	}
+
+	go func() {
+		defer close(events)
+
+		for {
+			select {
+			case <-subscriptionCtx.Done():
+				return
+			case _, ok := <-messages:
+				if !ok {
+					return
+				}
+
+				select {
+				case events <- struct{}{}:
+				case <-subscriptionCtx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return events, closeSubscription, nil
 }
 
 // AddToExpiryTimer sets up background tracking for a time-bound right or offer.
@@ -352,6 +459,26 @@ func (c *CacheRepo) AddToExpiryTimer(ctx context.Context, productID string, user
 		return fmt.Errorf("redis.CacheRepo.AddToExpiryTimer: %w", err)
 	}
 	return nil
+}
+
+// RefreshExpiryTimer extends an existing timer without recreating one already
+// claimed by the expiration worker. Concurrent refreshes can only move it forward.
+func (c *CacheRepo) RefreshExpiryTimer(
+	ctx context.Context,
+	productID string,
+	userID string,
+	expiresAt time.Time,
+) (bool, error) {
+	member := fmt.Sprintf("%s:%s", productID, userID)
+
+	refreshed, err := refreshExpiryTimerScript.Run(
+		ctx, c.client, []string{"expiring:rights"}, member, expiresAt.Unix(), time.Now().UTC().Unix(),
+	).Int()
+	if err != nil {
+		return false, fmt.Errorf("redis.CacheRepo.RefreshExpiryTimer: %w", err)
+	}
+
+	return refreshed == 1, nil
 }
 
 // RemoveFromExpiryTimer removes a user's timer if they complete an action before expiration.
@@ -386,7 +513,12 @@ func parseTimePtr(s string) *time.Time {
 // RestoreAvailableUnits returns unused or rolled-back stock to the available pool.
 func (c *CacheRepo) RestoreAvailableUnits(ctx context.Context, productID string, quantity int) error {
 	key := fmt.Sprintf("stock:%s", productID)
-	err := c.client.HIncrBy(ctx, key, "available_units", int64(quantity)).Err()
+	err := restoreAvailableUnitsScript.Run(
+		ctx,
+		c.client,
+		[]string{key, queueUpdatesChannel(productID)},
+		quantity,
+	).Err()
 	if err != nil {
 		return fmt.Errorf("redis.CacheRepo.RestoreAvailableUnits: %w", err)
 	}
@@ -425,7 +557,12 @@ func (c *CacheRepo) PopAndAllocate(ctx context.Context, productID string) (strin
 	queueKey := fmt.Sprintf("queue:%s", productID)
 	stockKey := fmt.Sprintf("stock:%s", productID)
 
-	res, err := popAndAllocateScript.Run(ctx, c.client, []string{queueKey, stockKey}, productID).Result()
+	res, err := popAndAllocateScript.Run(
+		ctx,
+		c.client,
+		[]string{queueKey, stockKey, queueUpdatesChannel(productID)},
+		productID,
+	).Result()
 	if err != nil {
 		return "", 0, 0, false, "", 0, fmt.Errorf("redis.CacheRepo.PopAndAllocate execute script: %w", err)
 	}
@@ -453,7 +590,13 @@ func (c *CacheRepo) PopAndAllocate(ctx context.Context, productID string) (strin
 func (c *CacheRepo) Requeue(ctx context.Context, productID string, userID string, score float64) error {
 	queueKey := fmt.Sprintf("queue:%s", productID)
 
-	err := c.client.ZAdd(ctx, queueKey, redis.Z{Score: score, Member: userID}).Err()
+	err := requeueScript.Run(
+		ctx,
+		c.client,
+		[]string{queueKey, queueUpdatesChannel(productID)},
+		score,
+		userID,
+	).Err()
 	if err != nil {
 		return fmt.Errorf("redis.CacheRepo.Requeue: %w", err)
 	}

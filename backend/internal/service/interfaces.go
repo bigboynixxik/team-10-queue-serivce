@@ -82,6 +82,11 @@ type CacheRepo interface {
 	// AddToExpiryTimer sets up background tracking for a time-bound right or offer.
 	AddToExpiryTimer(ctx context.Context, productID string, userID string, expiresAt time.Time) error
 
+	// RefreshExpiryTimer atomically extends an existing timer without recreating
+	// a timer that the expiration worker has already claimed.
+	RefreshExpiryTimer(
+		ctx context.Context, productID string, userID string, expiresAt time.Time,
+	) (refreshed bool, err error)
 	// RemoveFromExpiryTimer removes a user's timer if they complete an action before expiration.
 	RemoveFromExpiryTimer(ctx context.Context, productID string, userID string) error
 

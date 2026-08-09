@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -12,11 +13,6 @@ import (
 	"backend/internal/transport/mw"
 	"backend/pkg/logger"
 )
-
-// pollInterval is how often the loop re-reads the membership. The service also
-// publishes every change to a Redis channel; switching this loop to that
-// subscription is a drop-in change the client will not notice.
-const pollInterval = time.Second
 
 // stream serves the realtime mode of GET /queue/{product_id}/members/me.
 func (h *QueueHandler) stream(w http.ResponseWriter, r *http.Request) {
@@ -40,50 +36,119 @@ func (h *QueueHandler) stream(w http.ResponseWriter, r *http.Request) {
 	// the browser cancels ctx — the client never sends anything meaningful here.
 	ctx := conn.CloseRead(r.Context())
 
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
+	events, closeSubscription, err := h.realtime.SubscribeUpdates(ctx, productID, userID)
+	if err != nil {
+		log.Error("websocket subscribe", "error", err)
+		_ = conn.Close(websocket.StatusInternalError, "realtime subscription failed")
+		return
+	}
+	defer func() {
+		if errClose := closeSubscription(); errClose != nil {
+			log.Debug("websocket unsubscribe", "error", errClose)
+		}
+	}()
 
 	var sent membershipResponse
 
-	for {
-		membership, err := h.service.GetMembership(ctx, productID, userID)
+	sendCurrent := func() bool {
+		queue, err := h.service.GetUserQueue(ctx, productID, userID)
 		if err != nil {
 			if errors.Is(err, models.ErrMembershipNotFound) || errors.Is(err, models.ErrTokenNotFound) {
 				_ = conn.Close(websocket.StatusPolicyViolation, "membership not found")
 			} else {
 				log.Error("websocket status", "error", err)
+				_ = conn.Close(websocket.StatusInternalError, "membership read failed")
 			}
-
-			return
+			return false
 		}
 
-		resp := newMembershipResponse(membership)
+		if queue == nil || queue.Membership == nil {
+			_ = conn.Close(websocket.StatusPolicyViolation, "membership not found")
+			return false
+		}
+
+		resp := newUserQueueResponse(queue).membershipResponse
 		if !sameMembership(sent, resp) {
 			if err := wsjson.Write(ctx, conn, resp); err != nil {
 				log.Debug("websocket write", "error", err)
-				return
+				return false
 			}
 			sent = resp
 		}
 
-		if isTerminal(membership.Status) {
+		if isTerminal(queue.Membership.Status) {
 			_ = conn.Close(websocket.StatusNormalClosure, "terminal status")
+			return false
+		}
+		return true
+	}
+
+	refreshRightHeartbeat := func() {
+		if sent.Status != models.MembershipStatusRightActive {
 			return
 		}
 
+		if err := h.service.RefreshRightHeartbeat(ctx, productID, userID); err != nil {
+			if isExpectedHeartbeatError(err) {
+				log.Debug("websocket heartbeat not refreshed", "error", err)
+				return
+			}
+			log.Error("websocket heartbeat refresh", "error", err)
+		}
+	}
+
+	probeConnection := func() bool {
+		pingCtx, cancel := context.WithTimeout(ctx, h.heartbeatInterval)
+		defer cancel()
+
+		if err := conn.Ping(pingCtx); err != nil {
+			if ctx.Err() == nil {
+				log.Debug("websocket heartbeat timeout", "error", err)
+				_ = conn.CloseNow()
+			}
+			return false
+		}
+
+		refreshRightHeartbeat()
+		return true
+	}
+
+	if !sendCurrent() {
+		return
+	}
+
+	// A successful WebSocket handshake already proves initial presence. Native
+	// Ping/Pong probes keep extending the lease after this first refresh.
+	refreshRightHeartbeat()
+	heartbeatTicker := time.NewTicker(h.heartbeatInterval)
+	defer heartbeatTicker.Stop()
+
+	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case _, ok := <-events:
+			if !ok {
+				_ = conn.Close(websocket.StatusInternalError, "realtime subscription closed")
+				return
+			}
+			if !sendCurrent() {
+				return
+			}
+		case <-heartbeatTicker.C:
+			if !probeConnection() {
+				return
+			}
 		}
 	}
 }
 
 // sameMembership compares by value — ExpiresAt is a pointer, so == would compare
-// addresses and every tick would look like a change.
+// addresses and every event would look like a change.
 func sameMembership(a, b membershipResponse) bool {
 	if a.Status != b.Status || a.Token != b.Token ||
-		a.Quantity != b.Quantity || a.AvailableQuantity != b.AvailableQuantity {
+		a.Quantity != b.Quantity || a.AvailableQuantity != b.AvailableQuantity ||
+		a.Position != b.Position || a.ETASeconds != b.ETASeconds {
 		return false
 	}
 
@@ -95,6 +160,13 @@ func sameMembership(a, b membershipResponse) bool {
 	default:
 		return a.ExpiresAt.Equal(*b.ExpiresAt)
 	}
+}
+
+func isExpectedHeartbeatError(err error) bool {
+	return errors.Is(err, models.ErrInvalidStatus) ||
+		errors.Is(err, models.ErrTokenExpired) ||
+		errors.Is(err, models.ErrMembershipNotFound) ||
+		errors.Is(err, models.ErrTokenNotFound)
 }
 
 func isTerminal(status models.MembershipStatus) bool {

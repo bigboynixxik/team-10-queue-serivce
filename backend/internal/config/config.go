@@ -39,7 +39,13 @@ type Config struct {
 	// RightTTL is the lifetime of an issued purchase right before it expires.
 	RightTTL time.Duration `env:"RIGHT_TTL" envDefault:"4m"`
 
+	// RightHeartbeatInterval controls how often the server probes a WebSocket client.
+	RightHeartbeatInterval time.Duration `env:"RIGHT_HEARTBEAT_INTERVAL" envDefault:"5s"`
+
+	// RightHeartbeatTimeout is the grace period before an unconfirmed right is released.
+	RightHeartbeatTimeout time.Duration `env:"RIGHT_HEARTBEAT_TIMEOUT" envDefault:"30s"`
 	// OfferTTL is how long a partial offer waits for the user's decision.
+
 	OfferTTL time.Duration `env:"OFFER_TTL" envDefault:"2m"`
 
 	// ShutdownTimeout bounds the graceful shutdown period.
@@ -72,6 +78,23 @@ func Load(path string) (*Config, error) {
 	if err := env.Parse(&cfg); err != nil {
 		return nil, fmt.Errorf("config.Load parse error: %w", err)
 	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("config.Load validate: %w", err)
+	}
 
 	return &cfg, nil
+}
+
+func (c Config) validate() error {
+	if c.RightHeartbeatInterval <= 0 {
+		return fmt.Errorf("RIGHT_HEARTBEAT_INTERVAL must be positive")
+	}
+	if c.RightHeartbeatTimeout <= 0 {
+		return fmt.Errorf("RIGHT_HEARTBEAT_TIMEOUT must be positive")
+	}
+	if c.RightHeartbeatTimeout <= c.RightHeartbeatInterval {
+		return fmt.Errorf("RIGHT_HEARTBEAT_TIMEOUT must be greater than RIGHT_HEARTBEAT_INTERVAL")
+	}
+
+	return nil
 }
