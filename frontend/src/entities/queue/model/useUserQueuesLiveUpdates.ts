@@ -8,6 +8,7 @@ import { queueMembershipQueryKey, userQueuesQueryKey } from './queries';
 
 const reconnectDelays = [1000, 2000, 5000, 10000];
 
+/** пишет membership-кэши из sse списка очередей */
 const syncMemberships = (queryClient: QueryClient, queues: UserQueue[]): void => {
   for (const queue of queues) {
     queryClient.setQueryData<Membership>(queueMembershipQueryKey(queue.product_id), {
@@ -49,6 +50,7 @@ export const useUserQueuesLiveUpdates = (userId: string, { onUpdate }: Options =
     let source: EventSource | undefined;
 
     const reconnect = () => {
+      // второй reconnect не ставим пока тикает таймер
       if (disposed || reconnectTimer !== undefined) return;
 
       const delay = reconnectDelays[Math.min(reconnectAttempt, reconnectDelays.length - 1)];
@@ -79,6 +81,7 @@ export const useUserQueuesLiveUpdates = (userId: string, { onUpdate }: Options =
       });
 
       nextSource.onerror = () => {
+        // onerror от уже заменённого source игнорим
         if (disposed || source !== nextSource) return;
 
         nextSource.close();

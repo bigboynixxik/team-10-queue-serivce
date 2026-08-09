@@ -8,11 +8,7 @@ import { isPaymentSucceeded } from './isPaymentSucceeded';
 
 const checkoutOrigin = new URL(CHECKOUT_BASE_URL, window.location.href).origin;
 
-/**
- * The checkout tab closes itself right after the payment and tells this tab
- * about it. The message is only a hint to refetch: the status still comes from
- * Queue Service, which learns about the purchase from the backend event.
- */
+/** postmessage от checkout только сигнал перезапросить статус */
 export const useCheckoutResult = (productId: string): void => {
   const queryClient = useQueryClient();
 

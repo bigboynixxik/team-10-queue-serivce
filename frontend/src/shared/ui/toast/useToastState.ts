@@ -31,6 +31,7 @@ export const useToastState = (): {
     (content: ToastContent, variant: Toast['variant'], duration: number) => {
       const key = toastKey(content, variant);
 
+      // одинаковый тост не копим пока висит предыдущий
       if (visibleKeys.current.has(key)) return;
 
       visibleKeys.current.add(key);

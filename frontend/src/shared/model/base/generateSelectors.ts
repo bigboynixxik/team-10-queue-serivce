@@ -18,7 +18,6 @@ export const createSelectors = <S extends UseBoundStore<StoreApi<object>>>(
     use[key] = () => store(useShallow((state) => state[key as keyof typeof state]));
   }
 
-  // The selector map is built from runtime keys, so its shape can only be
-  // described to the compiler after the fact.
+  // форму use собираем в рантайме поэтому каст нужен
   return Object.assign(store, { use }) as unknown as WithSelectors<S>;
 };

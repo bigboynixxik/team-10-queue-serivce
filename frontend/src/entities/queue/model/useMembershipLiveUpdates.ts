@@ -20,6 +20,7 @@ export const useMembershipLiveUpdates = (productId: string, userId: string): voi
     let reconnectTimer: number | undefined;
     let socket: QueueWs | undefined;
 
+    // после терминального статуса ws больше не поднимаем
     const shouldConnect = () =>
       !disposed && !isTerminalStatus(queryClient.getQueryData<Membership>(queryKey)?.status);
 
@@ -36,6 +37,7 @@ export const useMembershipLiveUpdates = (productId: string, userId: string): voi
         },
         onError: () => queryClient.invalidateQueries({ queryKey }),
         onClose: () => {
+          // onclose от уже заменённого сокета игнорим
           if (disposed || socket !== nextSocket) return;
 
           socket = undefined;

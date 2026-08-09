@@ -31,6 +31,7 @@ export const useOrderQueueCta = (product: Product) => {
   useCheckoutResult(product.id);
 
   useEffect(() => {
+    // редирект только при переходе в purchased
     if (
       membership?.status === 'PURCHASED' &&
       previousStatus.current !== undefined &&
@@ -48,12 +49,10 @@ export const useOrderQueueCta = (product: Product) => {
   const isSoldOut = status === 'SOLD_OUT';
   const queue = queues.find((item) => item.product_id === product.id);
 
-  // The offer replaces the whole call to action: until the user answers it, no
-  // other action on this product is possible.
+  // при offer_pending вместо cta отвечаем на оффер
   const offeredQuantity = status === 'OFFER_PENDING' ? membership?.available_quantity : undefined;
 
-  // Quantity is fixed once the user is in the queue: the backend locks it into the
-  // membership, so the stepper only makes sense before joining.
+  // после входа количество уже зафиксировано на бэке
   const isQuantitySelectable = !isQueued && !isPayable && !isSoldOut;
 
   const action = resolveCtaAction({

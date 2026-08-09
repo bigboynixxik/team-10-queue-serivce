@@ -16,7 +16,7 @@ export const APP_BASENAME = '/avito';
 
 export const APP_STALE_TIME = readEnvNumber(import.meta.env.PUBLIC_APP_STALE_TIME, 30000);
 
-/** Absolute in-app path under `APP_BASENAME` (e.g. `/` → `/avito`, `/order-info/1` → `/avito/order-info/1`). */
+/** путь с basename приложения */
 export const appPath = (path = '/'): string => {
   if (path === '/') return APP_BASENAME;
 

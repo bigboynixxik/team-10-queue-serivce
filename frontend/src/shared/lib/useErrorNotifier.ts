@@ -3,10 +3,7 @@ import { useToast } from '@ui';
 
 export type ErrorNotifier = (error: unknown, fallback?: string) => void;
 
-/**
- * Single funnel for turning API rejections into user-facing toasts, so every
- * feature reports failures the same way.
- */
+/** единая точка показа ошибок api через toast */
 export const useErrorNotifier = (): ErrorNotifier => {
   const toast = useToast();
 

@@ -21,8 +21,7 @@ export const useMyQueuesMenu = () => {
 
   useMenuDismiss({ menuRef, isOpen, onDismiss: dismiss });
 
-  // A terminal membership is over for this user, so it is no longer a queue to
-  // return to — the queue page would only greet them with a farewell message.
+  // терминальные в меню не показываем
   const activeQueues = queues.filter((queue) => !isTerminalStatus(queue.status));
   const productTitles = new Map(products.map((product) => [product.id, product.title]));
 

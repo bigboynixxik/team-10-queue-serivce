@@ -127,6 +127,7 @@ abstract class HttpClient {
       case 404:
         return Promise.reject(new NotFoundError(messages));
       case 409:
+        // 409 с sold_out это конец товара а не общий конфликт
         return Promise.reject(
           new HttpError(status, responseStatus === 'SOLD_OUT' ? 'Товара больше нет' : messages),
         );

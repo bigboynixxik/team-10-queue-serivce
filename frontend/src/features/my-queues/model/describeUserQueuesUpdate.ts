@@ -27,6 +27,7 @@ export const describeUserQueuesUpdate = (
 
     before.delete(queue.product_id);
 
+    // первый снимок не шумит про уже завершённые
     if (!previous && isTerminalStatus(queue.status)) continue;
 
     if (!prev || prev.status !== queue.status) {
@@ -36,6 +37,7 @@ export const describeUserQueuesUpdate = (
     }
   }
 
+  // исчезли из списка значит вышли из очереди
   for (const queue of before.values()) {
     changes.push(`${getProductTitle(queue.product_id)} — очередь покинута`);
   }

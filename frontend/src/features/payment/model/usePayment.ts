@@ -17,8 +17,7 @@ export const usePayment = (productId: string, token?: string) => {
 
     mutation.mutate(token, {
       onSuccess: () => {
-        // Without an opener the checkout tab is not script-closable, so it could
-        // not close itself after the payment.
+        // именованное окно нужно чтобы checkout закрыл себя
         window.open(buildCheckoutUrl(productId, token), 'avito-checkout');
       },
       onError: (error) => notifyError(error, 'Не удалось перейти к оплате'),
