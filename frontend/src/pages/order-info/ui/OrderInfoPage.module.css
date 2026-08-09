@@ -57,6 +57,20 @@
   line-height: 1.5;
 }
 
+.OrderInfoPage__others {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  grid-column: 1 / -1;
+  margin-top: 24px;
+}
+
+.OrderInfoPage__others-title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
 @media (max-width: 760px) {
   .OrderInfoPage {
     width: min(100% - 24px, 1120px);
@@ -71,5 +85,13 @@
 
   .OrderInfoPage__image {
     border-radius: 32px;
+  }
+
+  .OrderInfoPage__others {
+    margin-top: 8px;
+  }
+
+  .OrderInfoPage__others-title {
+    font-size: 22px;
   }
 }

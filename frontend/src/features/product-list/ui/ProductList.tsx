@@ -9,10 +9,11 @@ import styles from './ProductList.module.css';
 const bem = cn('ProductList');
 
 type Props = {
+  excludeId?: string;
   renderItem: (product: Product) => ReactNode;
 };
 
-export const ProductList = ({ renderItem }: Props): React.JSX.Element => {
+export const ProductList = ({ excludeId, renderItem }: Props): React.JSX.Element => {
   const { data: products, isPending, isError } = useProductList();
 
   if (isPending) return <Spinner size="large" />;
@@ -20,5 +21,7 @@ export const ProductList = ({ renderItem }: Props): React.JSX.Element => {
     return <Alert title="Не удалось загрузить товары" variant="error" />;
   }
 
-  return <div className={styles[bem()]}>{products.map(renderItem)}</div>;
+  const items = excludeId ? products.filter((product) => product.id !== excludeId) : products;
+
+  return <div className={styles[bem()]}>{items.map(renderItem)}</div>;
 };

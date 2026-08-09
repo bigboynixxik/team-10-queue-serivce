@@ -2,6 +2,7 @@ import { appPath } from '@shared/config';
 import { cn } from '@shared/lib';
 import { Alert, Button, Spinner } from '@ui';
 import { OrderQueueCta } from '@widgets/order-queue-cta';
+import { ProductCatalog } from '@widgets/product-catalog';
 import { useNavigate } from 'react-router-dom';
 
 import { useOrderInfoPage } from '../model/useOrderInfoPage';
@@ -40,6 +41,10 @@ export const OrderInfoPage = (): React.JSX.Element => {
         <p className={styles[bem('price')]}>{product.price.toLocaleString('ru-RU')} ₽</p>
         <p className={styles[bem('description')]}>{product.description}</p>
         <OrderQueueCta product={product} />
+      </section>
+      <section className={styles[bem('others')]}>
+        <h2 className={styles[bem('others-title')]}>Другие товары</h2>
+        <ProductCatalog excludeId={product.id} />
       </section>
     </main>
   );
