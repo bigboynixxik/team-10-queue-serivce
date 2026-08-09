@@ -34,7 +34,8 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, models.ErrForbidden):
 		status = http.StatusForbidden
-	case errors.Is(err, models.ErrNoPendingOffer), errors.Is(err, models.ErrInvalidStatus):
+	case errors.Is(err, models.ErrNoPendingOffer), errors.Is(err, models.ErrInvalidStatus),
+		errors.Is(err, models.ErrConcurrentJoin):
 		status = http.StatusConflict
 	case errors.Is(err, models.ErrStockDepleted):
 		status = http.StatusConflict

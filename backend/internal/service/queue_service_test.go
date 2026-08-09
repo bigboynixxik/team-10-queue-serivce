@@ -51,7 +51,12 @@ func (s *QueueServiceTestSuite) TearDownTest() {
 
 // mockJoinQueueBase DRY helper for base dependencies.
 func (s *QueueServiceTestSuite) mockJoinQueueBase(stock, reqQty, alloc, avail int, soldOut bool, allocErr error) {
-	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(nil, models.ErrTokenNotFound)
+	// The membership is read twice: once before taking the join claim and once
+	// under it, since state may change while the claim is being acquired.
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
+		Return(nil, models.ErrTokenNotFound).Times(2)
+	s.mockCache.EXPECT().ClaimJoin(gomock.Any(), "prod-1", "user-1", gomock.Any()).Return(true, nil)
+	s.mockCache.EXPECT().ReleaseJoinClaim(gomock.Any(), "prod-1", "user-1").Return(nil)
 	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(stock, nil)
 	s.mockCache.EXPECT().InitStock(s.ctx, "prod-1", stock).Return(nil)
 
