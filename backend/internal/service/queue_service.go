@@ -17,12 +17,13 @@ import (
 
 // QueueService orchestrates the queue state machine, durable storage, and fast cache.
 type QueueService struct {
-	durable        DurableRepo
-	cache          CacheRepo
-	avito          AvitoClient
-	offerTTL       time.Duration
-	paymentTTL     time.Duration
-	avgPaymentTime time.Duration
+	durable          DurableRepo
+	cache            CacheRepo
+	avito            AvitoClient
+	offerTTL         time.Duration
+	paymentTTL       time.Duration
+	avgPaymentTime   time.Duration
+	heartbeatTimeout time.Duration
 }
 
 // NewQueueService constructs a new QueueService.
@@ -33,14 +34,16 @@ func NewQueueService(
 	offerTTL time.Duration,
 	paymentTTL time.Duration,
 	avgPaymentTime time.Duration,
+	heartbeatTimeout time.Duration,
 ) *QueueService {
 	return &QueueService{
-		durable:        durable,
-		cache:          cache,
-		avito:          avito,
-		offerTTL:       offerTTL,
-		paymentTTL:     paymentTTL,
-		avgPaymentTime: avgPaymentTime,
+		durable:          durable,
+		cache:            cache,
+		avito:            avito,
+		offerTTL:         offerTTL,
+		paymentTTL:       paymentTTL,
+		avgPaymentTime:   avgPaymentTime,
+		heartbeatTimeout: heartbeatTimeout,
 	}
 }
 
@@ -434,7 +437,11 @@ func (s *QueueService) syncCacheState(ctx context.Context, mem *models.QueueMemb
 		log.ErrorContext(ctx, "failed to cache membership", slog.Any("error", err))
 	}
 	if mem.ExpiresAt != nil {
-		if err := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, *mem.ExpiresAt); err != nil {
+		expiryDeadline := *mem.ExpiresAt
+		if mem.Status == models.MembershipStatusRightActive {
+			expiryDeadline = s.rightHeartbeatDeadline(time.Now().UTC(), expiryDeadline)
+		}
+		if err := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, expiryDeadline); err != nil {
 			log.ErrorContext(ctx, "failed to add to expiry timer", slog.Any("error", err))
 		}
 	}

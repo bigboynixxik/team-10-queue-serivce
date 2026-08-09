@@ -6,6 +6,7 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"backend/internal/transport"
 	"backend/internal/transport/mw"
@@ -13,13 +14,18 @@ import (
 
 // QueueHandler serves the queue and rights endpoints.
 type QueueHandler struct {
-	service  transport.QueueService
-	realtime transport.RealtimeSubscriber
+	service           transport.QueueService
+	realtime          transport.RealtimeSubscriber
+	heartbeatInterval time.Duration
 }
 
 // NewQueueHandler creates the handler over the service and realtime event source.
-func NewQueueHandler(service transport.QueueService, realtime transport.RealtimeSubscriber) *QueueHandler {
-	return &QueueHandler{service: service, realtime: realtime}
+func NewQueueHandler(
+	service transport.QueueService,
+	realtime transport.RealtimeSubscriber,
+	heartbeatInterval time.Duration,
+) *QueueHandler {
+	return &QueueHandler{service: service, realtime: realtime, heartbeatInterval: heartbeatInterval}
 }
 
 // APIPrefix versions the public API. Everything a client calls lives behind it,

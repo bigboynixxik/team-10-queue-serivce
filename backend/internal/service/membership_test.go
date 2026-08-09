@@ -12,7 +12,7 @@ import (
 // when a user is in the queue and there are fewer available units than their position.
 func (s *QueueServiceTestSuite) TestCalculateETA_HappyPath() {
 	avgPaymentTime := 75 * time.Second
-	srv := service.NewQueueService(s.mockDurable, s.mockCache, s.mockAvito, time.Minute, time.Minute, avgPaymentTime)
+	srv := service.NewQueueService(s.mockDurable, s.mockCache, s.mockAvito, time.Minute, time.Minute, avgPaymentTime, 30*time.Second)
 
 	s.mockCache.EXPECT().GetQueueMetrics(s.ctx, "prod-1", "user-1").Return(4, 2, nil)
 
@@ -27,7 +27,7 @@ func (s *QueueServiceTestSuite) TestCalculateETA_HappyPath() {
 // the user's position, the estimated wait time is zero.
 func (s *QueueServiceTestSuite) TestCalculateETA_BestCase() {
 	avgPaymentTime := 75 * time.Second
-	srv := service.NewQueueService(s.mockDurable, s.mockCache, s.mockAvito, time.Minute, time.Minute, avgPaymentTime)
+	srv := service.NewQueueService(s.mockDurable, s.mockCache, s.mockAvito, time.Minute, time.Minute, avgPaymentTime, 30*time.Second)
 
 	s.mockCache.EXPECT().GetQueueMetrics(s.ctx, "prod-2", "user-2").Return(1, 5, nil)
 
@@ -42,7 +42,7 @@ func (s *QueueServiceTestSuite) TestCalculateETA_BestCase() {
 // user are properly wrapped and propagated for the transport layer to handle.
 func (s *QueueServiceTestSuite) TestCalculateETA_NotInQueue() {
 	avgPaymentTime := 75 * time.Second
-	srv := service.NewQueueService(s.mockDurable, s.mockCache, s.mockAvito, time.Minute, time.Minute, avgPaymentTime)
+	srv := service.NewQueueService(s.mockDurable, s.mockCache, s.mockAvito, time.Minute, time.Minute, avgPaymentTime, 30*time.Second)
 
 	s.mockCache.EXPECT().GetQueueMetrics(s.ctx, "prod-3", "ghost").Return(0, 0, models.ErrMembershipNotFound)
 
@@ -58,7 +58,7 @@ func (s *QueueServiceTestSuite) TestCalculateETA_NotInQueue() {
 // errors from the cache are securely wrapped and propagated.
 func (s *QueueServiceTestSuite) TestCalculateETA_InfrastructureError() {
 	avgPaymentTime := 75 * time.Second
-	srv := service.NewQueueService(s.mockDurable, s.mockCache, s.mockAvito, time.Minute, time.Minute, avgPaymentTime)
+	srv := service.NewQueueService(s.mockDurable, s.mockCache, s.mockAvito, time.Minute, time.Minute, avgPaymentTime, 30*time.Second)
 	infraErr := errors.New("redis timeout")
 
 	s.mockCache.EXPECT().GetQueueMetrics(s.ctx, "prod-4", "user-4").Return(0, 0, infraErr)

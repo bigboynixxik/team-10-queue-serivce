@@ -25,6 +25,7 @@ type realtimeQueueServiceStub struct {
 	position       int
 	eta            time.Duration
 	userQueueCalls int
+	heartbeatCalls int
 }
 
 func (s *realtimeQueueServiceStub) JoinQueue(
@@ -124,6 +125,21 @@ func (s *realtimeQueueServiceStub) CalculateETA(
 	return s.position, s.eta, nil
 }
 
+func (s *realtimeQueueServiceStub) RefreshRightHeartbeat(context.Context, string, string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.heartbeatCalls++
+	return nil
+}
+
+func (s *realtimeQueueServiceStub) heartbeatCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.heartbeatCalls
+}
+
 func (s *realtimeQueueServiceStub) setQueueMetrics(position int, eta time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,7 +193,7 @@ func TestWebSocketStreamsInitialSnapshotAndRedisUpdatesWithoutPolling(t *testing
 	}
 	realtime := &realtimeSubscriberStub{events: make(chan struct{}, 4)}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	server := httptest.NewServer(NewRouter(NewQueueHandler(service, realtime), log, "internal-token"))
+	server := httptest.NewServer(NewRouter(NewQueueHandler(service, realtime, time.Hour), log, "internal-token"))
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") +
@@ -235,7 +251,7 @@ func TestStatusReturnsQueuePositionAndETA(t *testing.T) {
 	}
 	realtime := &realtimeSubscriberStub{events: make(chan struct{})}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	server := httptest.NewServer(NewRouter(NewQueueHandler(service, realtime), log, "internal-token"))
+	server := httptest.NewServer(NewRouter(NewQueueHandler(service, realtime, time.Hour), log, "internal-token"))
 	defer server.Close()
 
 	response, err := server.Client().Get(
@@ -262,4 +278,103 @@ func TestSameMembershipIncludesQueueMetrics(t *testing.T) {
 
 	require.True(t, sameMembership(first, same))
 	require.False(t, sameMembership(first, moved))
+}
+
+func TestWebSocketRefreshesActiveRightHeartbeatAfterPong(t *testing.T) {
+	token := "right-token"
+	expiresAt := time.Now().UTC().Add(time.Minute)
+	service := &realtimeQueueServiceStub{
+		membership: models.QueueMembership{
+			ProductID:    "product-1",
+			UserID:       "user-1",
+			Status:       models.MembershipStatusRightActive,
+			Quantity:     1,
+			CurrentToken: &token,
+			ExpiresAt:    &expiresAt,
+		},
+	}
+	realtime := &realtimeSubscriberStub{events: make(chan struct{}, 1)}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	server := httptest.NewServer(NewRouter(
+		NewQueueHandler(service, realtime, 20*time.Millisecond),
+		log,
+		"internal-token",
+	))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") +
+		APIPrefix + "/queue/product-1/members/me?user_id=user-1"
+
+	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
+	require.NoError(t, err)
+
+	var initial membershipResponse
+	require.NoError(t, wsjson.Read(context.Background(), conn, &initial))
+	require.Equal(t, models.MembershipStatusRightActive, initial.Status)
+	require.Eventually(t, func() bool {
+		return service.heartbeatCallCount() >= 1
+	}, time.Second, 10*time.Millisecond)
+
+	readCtx, cancelRead := context.WithCancel(context.Background())
+	readDone := make(chan error, 1)
+	go func() {
+		var next membershipResponse
+		readDone <- wsjson.Read(readCtx, conn, &next)
+	}()
+
+	require.Eventually(t, func() bool {
+		return service.heartbeatCallCount() >= 2
+	}, time.Second, 10*time.Millisecond, "Pong must refresh the active right lease")
+
+	_ = conn.CloseNow()
+	cancelRead()
+	select {
+	case <-readDone:
+	case <-time.After(time.Second):
+		t.Fatal("websocket reader did not stop")
+	}
+}
+
+func TestWebSocketStopsRefreshingWhenPongIsMissing(t *testing.T) {
+	token := "right-token"
+	expiresAt := time.Now().UTC().Add(time.Minute)
+	service := &realtimeQueueServiceStub{
+		membership: models.QueueMembership{
+			ProductID:    "product-1",
+			UserID:       "user-1",
+			Status:       models.MembershipStatusRightActive,
+			CurrentToken: &token,
+			ExpiresAt:    &expiresAt,
+		},
+	}
+	realtime := &realtimeSubscriberStub{events: make(chan struct{}, 1)}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	server := httptest.NewServer(NewRouter(
+		NewQueueHandler(service, realtime, 20*time.Millisecond),
+		log,
+		"internal-token",
+	))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") +
+		APIPrefix + "/queue/product-1/members/me?user_id=user-1"
+	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+
+	var initial membershipResponse
+	require.NoError(t, wsjson.Read(context.Background(), conn, &initial))
+	require.Eventually(t, func() bool {
+		return service.heartbeatCallCount() == 1
+	}, time.Second, 10*time.Millisecond)
+
+	// Stop reading: a real browser that disappeared would no longer process the
+	// protocol Ping frame or send Pong.
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, 1, service.heartbeatCallCount())
+
+	readCtx, cancelRead := context.WithTimeout(context.Background(), time.Second)
+	defer cancelRead()
+	err = wsjson.Read(readCtx, conn, &membershipResponse{})
+	require.Error(t, err)
 }

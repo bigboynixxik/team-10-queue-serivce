@@ -53,6 +53,10 @@ type QueueService interface {
 	// CalculateETA computes the user's human-readable position in the queue (1-indexed)
 	// and the estimated wait time in seconds before they receive an offer or right.
 	CalculateETA(ctx context.Context, productID string, userID string) (position int, etaSeconds time.Duration, err error)
+
+	// RefreshRightHeartbeat confirms that the holder of an active purchase right
+	// still has a live WebSocket connection.
+	RefreshRightHeartbeat(ctx context.Context, productID string, userID string) error
 }
 
 // RealtimeSubscriber provides transport-level invalidation signals without

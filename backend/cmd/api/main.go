@@ -92,11 +92,12 @@ func run() error {
 		cfg.OfferTTL,
 		cfg.RightTTL,
 		cfg.AvgPaymentTime,
+		cfg.RightHeartbeatTimeout,
 	)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           api.NewRouter(api.NewQueueHandler(queueService, cacheRepo), log, cfg.InternalToken),
+		Handler:           api.NewRouter(api.NewQueueHandler(queueService, cacheRepo, cfg.RightHeartbeatInterval), log, cfg.InternalToken),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 	shutdown.Add(srv.Shutdown)
