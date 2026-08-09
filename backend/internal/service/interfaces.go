@@ -18,6 +18,9 @@ type DurableRepo interface {
 	// GetRightByToken retrieves a right by its unique token.
 	GetRightByToken(ctx context.Context, token string) (*models.Right, error)
 
+	// LoadRecoverySnapshot reads the durable state needed to rebuild Redis.
+	LoadRecoverySnapshot(ctx context.Context) (*models.RecoverySnapshot, error)
+
 	// UpsertMembership creates or updates a user's current status in the queue.
 	// It handles (product_id, user_id) conflicts gracefully.
 	UpsertMembership(ctx context.Context, membership *models.QueueMembership) error
@@ -138,6 +141,12 @@ type CacheRepo interface {
 
 	// Requeue atomically puts a user back into the queue at their original position (used for rollbacks).
 	Requeue(ctx context.Context, productID string, userID string, score float64) error
+
+	// RestoreProductState replaces one product's recovered stock and FIFO queue.
+	RestoreProductState(ctx context.Context, productID string, productCount int, available int, queuedUserIDs []string) error
+
+	// ResetExpiryTimers clears only expiration worker indexes before recovery recreates them.
+	ResetExpiryTimers(ctx context.Context) error
 
 	// GetQueueMetrics retrieves the user's 0-indexed rank in the queue and the currently available stock.
 	// It uses a pipeline to minimize network round-trips for real-time ETA calculation.

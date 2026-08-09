@@ -92,6 +92,19 @@ var (
 		return 1
 	`)
 
+	restoreProductStateScript = redis.NewScript(`
+		redis.call('DEL', KEYS[1])
+		redis.call('HSET', KEYS[1], 'product_count', ARGV[1], 'available_units', ARGV[2])
+
+		redis.call('DEL', KEYS[2])
+		for i = 3, #ARGV do
+			redis.call('ZADD', KEYS[2], i - 2, ARGV[i])
+		end
+
+		redis.call('SET', KEYS[3], #ARGV - 2)
+		return 1
+	`)
+
 	releaseMembershipClaimScript = redis.NewScript(`
 		if redis.call('GET', KEYS[1]) ~= ARGV[1] then
 			return 0
@@ -760,6 +773,51 @@ func (c *CacheRepo) Requeue(ctx context.Context, productID string, userID string
 	if err != nil {
 		return fmt.Errorf("redis.CacheRepo.Requeue: %w", err)
 	}
+	return nil
+}
+
+// RestoreProductState replaces stock counters and FIFO queue for one product
+// during startup recovery. Queue scores are rebuilt as 1..N and the sequence is
+// set to N so the next Enqueue call appends after the recovered users.
+func (c *CacheRepo) RestoreProductState(
+	ctx context.Context,
+	productID string,
+	productCount int,
+	available int,
+	queuedUserIDs []string,
+) error {
+	args := make([]any, 0, len(queuedUserIDs)+2)
+	args = append(args, productCount, available)
+	for _, userID := range queuedUserIDs {
+		args = append(args, userID)
+	}
+
+	err := restoreProductStateScript.Run(
+		ctx,
+		c.client,
+		[]string{
+			fmt.Sprintf("stock:%s", productID),
+			queueKey(productID),
+			fmt.Sprintf("queue:%s:seq", productID),
+		},
+		args...,
+	).Err()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("redis.CacheRepo.RestoreProductState: %w", err)
+	}
+
+	return nil
+}
+
+// ResetExpiryTimers clears only the expiration worker indexes. It intentionally
+// leaves unrelated Redis data intact; recovery recreates the timers from
+// PostgreSQL immediately afterwards.
+func (c *CacheRepo) ResetExpiryTimers(ctx context.Context) error {
+	err := c.client.Del(ctx, expiryScheduledKey, expiryProcessingKey, expiryDeadlineKey).Err()
+	if err != nil {
+		return fmt.Errorf("redis.CacheRepo.ResetExpiryTimers: %w", err)
+	}
+
 	return nil
 }
 

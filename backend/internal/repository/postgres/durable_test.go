@@ -620,6 +620,68 @@ func (s *RepoTestSuite) TestRightTerminalTransitionsRace() {
 	}
 }
 
+func (s *RepoTestSuite) TestLoadRecoverySnapshot() {
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	activeToken := "recovery-active"
+	usedToken := "recovery-used"
+	offerAvailable := 2
+	orderID := "order-recovery"
+	usedAt := base.Add(3 * time.Minute)
+
+	_, err := s.pool.Exec(s.ctx, `
+		INSERT INTO product_stock (product_id, product_count, total_stock, updated_at)
+		VALUES
+			('prod-a', 5, 8, $1),
+			('prod-b', 3, 3, $1)
+	`, base)
+	require.NoError(s.T(), err)
+
+	_, err = s.pool.Exec(s.ctx, `
+		INSERT INTO rights
+			(token, user_id, product_id, quantity, status, order_id, created_at, expires_at, used_at)
+		VALUES
+			($1, 'user-active', 'prod-a', 1, 'ACTIVE', NULL, $2, $3, NULL),
+			($4, 'user-used', 'prod-a', 1, 'USED', $5, $2, $3, $6)
+	`, activeToken, base, base.Add(time.Hour), usedToken, orderID, usedAt)
+	require.NoError(s.T(), err)
+
+	_, err = s.pool.Exec(s.ctx, `
+		INSERT INTO queue_memberships
+			(product_id, user_id, status, quantity, available_quantity, current_token, expires_at, created_at, updated_at)
+		VALUES
+			('prod-a', 'queued-1', 'QUEUED', 1, NULL, NULL, NULL, $1, $2),
+			('prod-a', 'active-user', 'RIGHT_ACTIVE', 1, NULL, $3, $4, $1, $5),
+			('prod-a', 'offer-user', 'OFFER_PENDING', 4, $6, NULL, $4, $1, $7),
+			('prod-b', 'queued-b', 'QUEUED', 1, NULL, NULL, NULL, $1, $2)
+	`, base, base.Add(time.Second), activeToken, base.Add(time.Hour), base.Add(2*time.Second), offerAvailable, base.Add(3*time.Second))
+	require.NoError(s.T(), err)
+
+	snapshot, err := s.repo.LoadRecoverySnapshot(s.ctx)
+	require.NoError(s.T(), err)
+
+	require.Len(s.T(), snapshot.Stocks, 2)
+	require.Equal(s.T(), "prod-a", snapshot.Stocks[0].ProductID)
+	require.Equal(s.T(), 5, snapshot.Stocks[0].ProductCount)
+	require.Equal(s.T(), "prod-b", snapshot.Stocks[1].ProductID)
+
+	require.Len(s.T(), snapshot.Memberships, 4)
+	require.Equal(s.T(), []string{"queued-1", "active-user", "offer-user", "queued-b"}, []string{
+		snapshot.Memberships[0].UserID,
+		snapshot.Memberships[1].UserID,
+		snapshot.Memberships[2].UserID,
+		snapshot.Memberships[3].UserID,
+	})
+	require.Equal(s.T(), activeToken, *snapshot.Memberships[1].CurrentToken)
+	require.Equal(s.T(), offerAvailable, *snapshot.Memberships[2].AvailableQuantity)
+
+	require.Len(s.T(), snapshot.Rights, 2)
+	require.Equal(s.T(), activeToken, snapshot.Rights[0].Token)
+	require.Equal(s.T(), models.RightStatusActive, snapshot.Rights[0].Status)
+	require.Equal(s.T(), usedToken, snapshot.Rights[1].Token)
+	require.Equal(s.T(), orderID, *snapshot.Rights[1].OrderID)
+	require.True(s.T(), usedAt.Equal(*snapshot.Rights[1].UsedAt))
+}
+
 // TestRepoTestSuite acts as the entry point for 'go test'.
 func TestRepoTestSuite(t *testing.T) {
 	suite.Run(t, new(RepoTestSuite))

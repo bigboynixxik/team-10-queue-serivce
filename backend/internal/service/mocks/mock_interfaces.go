@@ -103,6 +103,21 @@ func (mr *MockDurableRepoMockRecorder) GetRightByToken(ctx, token any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRightByToken", reflect.TypeOf((*MockDurableRepo)(nil).GetRightByToken), ctx, token)
 }
 
+// LoadRecoverySnapshot mocks base method.
+func (m *MockDurableRepo) LoadRecoverySnapshot(ctx context.Context) (*models.RecoverySnapshot, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LoadRecoverySnapshot", ctx)
+	ret0, _ := ret[0].(*models.RecoverySnapshot)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LoadRecoverySnapshot indicates an expected call of LoadRecoverySnapshot.
+func (mr *MockDurableRepoMockRecorder) LoadRecoverySnapshot(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadRecoverySnapshot", reflect.TypeOf((*MockDurableRepo)(nil).LoadRecoverySnapshot), ctx)
+}
+
 // ListMembershipsByUser mocks base method.
 func (m *MockDurableRepo) ListMembershipsByUser(ctx context.Context, userID string) ([]*models.QueueMembership, error) {
 	m.ctrl.T.Helper()
@@ -552,6 +567,34 @@ func (m *MockCacheRepo) Requeue(ctx context.Context, productID, userID string, s
 func (mr *MockCacheRepoMockRecorder) Requeue(ctx, productID, userID, score any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Requeue", reflect.TypeOf((*MockCacheRepo)(nil).Requeue), ctx, productID, userID, score)
+}
+
+// ResetExpiryTimers mocks base method.
+func (m *MockCacheRepo) ResetExpiryTimers(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResetExpiryTimers", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResetExpiryTimers indicates an expected call of ResetExpiryTimers.
+func (mr *MockCacheRepoMockRecorder) ResetExpiryTimers(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetExpiryTimers", reflect.TypeOf((*MockCacheRepo)(nil).ResetExpiryTimers), ctx)
+}
+
+// RestoreProductState mocks base method.
+func (m *MockCacheRepo) RestoreProductState(ctx context.Context, productID string, productCount, available int, queuedUserIDs []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RestoreProductState", ctx, productID, productCount, available, queuedUserIDs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RestoreProductState indicates an expected call of RestoreProductState.
+func (mr *MockCacheRepoMockRecorder) RestoreProductState(ctx, productID, productCount, available, queuedUserIDs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreProductState", reflect.TypeOf((*MockCacheRepo)(nil).RestoreProductState), ctx, productID, productCount, available, queuedUserIDs)
 }
 
 // RestoreAvailableUnits mocks base method.

@@ -32,6 +32,163 @@ func NewDurableRepo(pool *pgxpool.Pool) *DurableRepo {
 	}
 }
 
+// LoadRecoverySnapshot reads every durable row needed to reconstruct Redis from
+// PostgreSQL. A repeatable-read, read-only transaction keeps stock, membership,
+// and right rows on the same database snapshot.
+func (dr *DurableRepo) LoadRecoverySnapshot(ctx context.Context) (*models.RecoverySnapshot, error) {
+	log := logger.FromContext(ctx)
+
+	tx, err := dr.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.LoadRecoverySnapshot begin: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
+			log.Error("failed to rollback recovery snapshot transaction", "error", rbErr)
+		}
+	}()
+
+	stocks, err := dr.loadRecoveryStocks(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	memberships, err := dr.loadRecoveryMemberships(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	rights, err := dr.loadRecoveryRights(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.LoadRecoverySnapshot commit: %w", err)
+	}
+
+	return &models.RecoverySnapshot{
+		Stocks:      stocks,
+		Memberships: memberships,
+		Rights:      rights,
+	}, nil
+}
+
+func (dr *DurableRepo) loadRecoveryStocks(ctx context.Context, tx pgx.Tx) ([]*models.ProductStock, error) {
+	query, args, err := dr.sq.Select("product_id", "product_count", "total_stock", "updated_at").
+		From("product_stock").
+		OrderBy("product_id").
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryStocks query build: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryStocks execute: %w", err)
+	}
+	defer rows.Close()
+
+	stocks := make([]*models.ProductStock, 0)
+	for rows.Next() {
+		stock := &models.ProductStock{}
+		if err := rows.Scan(
+			&stock.ProductID, &stock.ProductCount, &stock.TotalStock, &stock.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryStocks scan: %w", err)
+		}
+
+		stocks = append(stocks, stock)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryStocks rows: %w", err)
+	}
+
+	return stocks, nil
+}
+
+func (dr *DurableRepo) loadRecoveryMemberships(ctx context.Context, tx pgx.Tx) ([]*models.QueueMembership, error) {
+	query, args, err := dr.sq.Select(
+		"id", "product_id", "user_id", "status", "quantity",
+		"available_quantity", "current_token", "expires_at", "created_at", "updated_at",
+	).
+		From("queue_memberships").
+		OrderBy("product_id", "updated_at", "id").
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryMemberships query build: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryMemberships execute: %w", err)
+	}
+	defer rows.Close()
+
+	memberships := make([]*models.QueueMembership, 0)
+	for rows.Next() {
+		membership := &models.QueueMembership{}
+		if err := rows.Scan(
+			&membership.ID, &membership.ProductID, &membership.UserID,
+			&membership.Status, &membership.Quantity, &membership.AvailableQuantity,
+			&membership.CurrentToken, &membership.ExpiresAt,
+			&membership.CreatedAt, &membership.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryMemberships scan: %w", err)
+		}
+
+		memberships = append(memberships, membership)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryMemberships rows: %w", err)
+	}
+
+	return memberships, nil
+}
+
+func (dr *DurableRepo) loadRecoveryRights(ctx context.Context, tx pgx.Tx) ([]*models.Right, error) {
+	query, args, err := dr.sq.Select(
+		"token", "user_id", "product_id", "quantity", "status",
+		"order_id", "created_at", "expires_at", "used_at",
+	).
+		From("rights").
+		OrderBy("created_at", "token").
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryRights query build: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryRights execute: %w", err)
+	}
+	defer rows.Close()
+
+	rights := make([]*models.Right, 0)
+	for rows.Next() {
+		right := &models.Right{}
+		if err := rows.Scan(
+			&right.Token, &right.UserID, &right.ProductID, &right.Quantity,
+			&right.Status, &right.OrderID, &right.CreatedAt, &right.ExpiresAt, &right.UsedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryRights scan: %w", err)
+		}
+
+		rights = append(rights, right)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryRights rows: %w", err)
+	}
+
+	return rights, nil
+}
+
 // SaveRight persists a newly issued purchase right into the database.
 func (dr *DurableRepo) SaveRight(ctx context.Context, right *models.Right) error {
 	query, args, err := dr.sq.Insert("rights").

@@ -778,6 +778,60 @@ func (s *CacheTestSuite) TestRequeue() {
 	require.Equal(s.T(), 42.5, res[0].Score)
 }
 
+func (s *CacheTestSuite) TestRestoreProductState_ReplacesStockQueueAndSeq() {
+	require.NoError(s.T(), s.client.HSet(s.ctx, "stock:prod-recovery", "product_count", 99, "available_units", 99).Err())
+	require.NoError(s.T(), s.repo.Enqueue(s.ctx, "prod-recovery", "stale-user"))
+
+	require.NoError(s.T(), s.repo.RestoreProductState(
+		s.ctx,
+		"prod-recovery",
+		5,
+		2,
+		[]string{"user-1", "user-2"},
+	))
+
+	stock, err := s.client.HGetAll(s.ctx, "stock:prod-recovery").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "5", stock["product_count"])
+	require.Equal(s.T(), "2", stock["available_units"])
+
+	queue, err := s.client.ZRangeWithScores(s.ctx, "queue:prod-recovery", 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Len(s.T(), queue, 2)
+	require.Equal(s.T(), "user-1", queue[0].Member)
+	require.Equal(s.T(), float64(1), queue[0].Score)
+	require.Equal(s.T(), "user-2", queue[1].Member)
+	require.Equal(s.T(), float64(2), queue[1].Score)
+
+	seq, err := s.client.Get(s.ctx, "queue:prod-recovery:seq").Int()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 2, seq)
+
+	require.NoError(s.T(), s.repo.Enqueue(s.ctx, "prod-recovery", "user-3"))
+	score, err := s.client.ZScore(s.ctx, "queue:prod-recovery", "user-3").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(3), score)
+}
+
+func (s *CacheTestSuite) TestResetExpiryTimers_OnlyClearsExpirationIndexes() {
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(s.ctx, "prod-expiry", "user-expiry", time.Now().UTC().Add(time.Minute)))
+	require.NoError(s.T(), s.client.ZAdd(s.ctx, "expiring:processing", redis.Z{Score: 1, Member: "prod-expiry:user-expiry"}).Err())
+	require.NoError(s.T(), s.client.HSet(s.ctx, "expiring:processing-deadlines", "prod-expiry:user-expiry", 1).Err())
+	require.NoError(s.T(), s.client.Set(s.ctx, "unrelated:key", "keep", 0).Err())
+
+	require.NoError(s.T(), s.repo.ResetExpiryTimers(s.ctx))
+
+	for _, key := range []string{"expiring:rights", "expiring:processing", "expiring:processing-deadlines"} {
+		exists, err := s.client.Exists(s.ctx, key).Result()
+		require.NoError(s.T(), err)
+		require.Zero(s.T(), exists)
+	}
+
+	value, err := s.client.Get(s.ctx, "unrelated:key").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "keep", value)
+}
+
 // TestGetQueueMetrics_Success verifies that the method correctly retrieves
 // the user's rank and the available stock when both exist in the database.
 func (s *CacheTestSuite) TestGetQueueMetrics_Success() {

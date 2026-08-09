@@ -96,6 +96,10 @@ func run() error {
 		service.WithStockOutbox(cfg.StockOutboxLease, cfg.StockOutboxBatchSize, cfg.StockOutboxMaxBackoff),
 	)
 
+	if err := queueService.RecoverCache(ctx); err != nil {
+		return err
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           api.NewRouter(api.NewQueueHandler(queueService, cacheRepo, cfg.RightHeartbeatInterval), log, cfg.InternalToken),
@@ -147,6 +151,14 @@ func applyMigrations(pool *pgxpool.Pool) error {
 // state machine only moves on a request or on a timer, and this is the timer
 // (docs/design_context.md, п. 5.5).
 func runExpirationWorker(ctx context.Context, svc *service.QueueService, interval time.Duration, log *slog.Logger) {
+	process := func() {
+		if err := svc.ProcessExpirations(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("process expirations", "error", err)
+		}
+	}
+
+	process()
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -155,9 +167,7 @@ func runExpirationWorker(ctx context.Context, svc *service.QueueService, interva
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := svc.ProcessExpirations(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Error("process expirations", "error", err)
-			}
+			process()
 		}
 	}
 }
