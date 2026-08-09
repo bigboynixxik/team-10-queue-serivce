@@ -4,6 +4,9 @@ import { USER_ID_STORAGE_KEY } from '@shared/config';
 
 import { createUserId } from './utils';
 
+const UUID_V4_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 describe('createUserId', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -26,5 +29,17 @@ describe('createUserId', () => {
 
     expect(createUserId()).toBe(generatedId);
     expect(localStorage.getItem(USER_ID_STORAGE_KEY)).toBe(generatedId);
+  });
+
+  test('falls back to getRandomValues when randomUUID is unavailable', () => {
+    Object.defineProperty(crypto, 'randomUUID', {
+      configurable: true,
+      value: undefined,
+    });
+
+    const userId = createUserId();
+
+    expect(userId).toMatch(UUID_V4_RE);
+    expect(localStorage.getItem(USER_ID_STORAGE_KEY)).toBe(userId);
   });
 });

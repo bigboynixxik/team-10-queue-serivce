@@ -2,17 +2,22 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import { QueueWs } from '../api/QueueWs';
-import type { Membership } from '../api/type';
+import type { Membership, MembershipStatus } from '../api/type';
 import { queueMembershipQueryKey } from './queries';
 import { isTerminalStatus } from './status';
 
 const reconnectDelays = [1000, 2000, 5000, 10000];
 
-export const useMembershipLiveUpdates = (productId: string, userId: string): void => {
+export const useMembershipLiveUpdates = (
+  productId: string,
+  userId: string,
+  status?: MembershipStatus,
+): void => {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (!productId || !userId) return;
+    // ws только когда уже есть живой membership — иначе 404-петля invalidate→getMe
+    if (!productId || !userId || !status || isTerminalStatus(status)) return;
 
     const queryKey = queueMembershipQueryKey(productId);
     let disposed = false;
@@ -20,7 +25,6 @@ export const useMembershipLiveUpdates = (productId: string, userId: string): voi
     let reconnectTimer: number | undefined;
     let socket: QueueWs | undefined;
 
-    // после терминального статуса ws больше не поднимаем
     const shouldConnect = () =>
       !disposed && !isTerminalStatus(queryClient.getQueryData<Membership>(queryKey)?.status);
 
@@ -60,5 +64,5 @@ export const useMembershipLiveUpdates = (productId: string, userId: string): voi
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       socket?.disconnect();
     };
-  }, [productId, userId, queryClient]);
+  }, [productId, userId, status, queryClient]);
 };

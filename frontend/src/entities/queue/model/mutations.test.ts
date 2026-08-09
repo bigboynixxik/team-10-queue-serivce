@@ -36,6 +36,9 @@ describe('queueMutations', () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: ['queue', 'membership', 'p1'],
     });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ['queue', 'user-queues'],
+    });
   });
 
   test('acceptOffer and declineOffer invalidate membership', async () => {
@@ -58,6 +61,7 @@ describe('queueMutations', () => {
 
     expect(acceptOffer).toHaveBeenCalledWith('p1', { quantity: 1 });
     expect(declineOffer).toHaveBeenCalledWith('p1');
-    expect(invalidateQueries).toHaveBeenCalledTimes(2);
+    expect(invalidateQueries).toHaveBeenCalledTimes(4);
   });
 });
+

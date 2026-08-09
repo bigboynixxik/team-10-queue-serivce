@@ -8,7 +8,8 @@ class UserQueuesApi extends HttpClient {
   }
 
   public async getAll(): Promise<UserQueue[]> {
-    return UserQueuesSchema.parse(await super.get<unknown>({}));
+    // uri пустой: baseURL уже /me/queues, иначе получится /me/queues/me/queues
+    return UserQueuesSchema.parse(await this.get<unknown>({ uri: '' }));
   }
 }
 

@@ -26,7 +26,7 @@ export const useQueueStatus = (productId: string): QueueStatus => {
   const expiresAt = membership?.expires_at;
   const [secondsLeft, setSecondsLeft] = useState<Nullable<number>>(null);
 
-  useMembershipLiveUpdates(productId, userId);
+  useMembershipLiveUpdates(productId, userId, membership?.status);
 
   useEffect(() => {
     setSecondsLeft(secondsToExpiry(expiresAt));

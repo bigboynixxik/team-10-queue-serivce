@@ -6,8 +6,11 @@ import { queueApi } from '../api/QueueApi';
 import type { AcceptOfferPayload, JoinPayload } from '../api/type';
 import { queueMembershipQueryKey } from './queries';
 
-const invalidateMembership = (productId: string) =>
+const invalidateMembership = (productId: string) => {
   queryClient.invalidateQueries({ queryKey: queueMembershipQueryKey(productId) });
+  // каталог и меню читают /me/queues — обновляем вместе с membership
+  queryClient.invalidateQueries({ queryKey: ['queue', 'user-queues'] });
+};
 
 export const queueMutations = {
   join: (productId: string) =>

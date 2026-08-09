@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, rs, test } from '@rstest/core';
 
+import { HttpError } from '@shared/api';
+
 const getMe = rs.fn();
 const getStats = rs.fn();
 const getAll = rs.fn();
@@ -39,6 +41,12 @@ describe('queueQueries', () => {
     await expect(options.queryFn?.({} as never)).resolves.toEqual({ status: 'QUEUED' });
     expect(getMe).toHaveBeenCalledWith('p1');
   });
+
+  test('me maps 404 to null', async () => {
+    getMe.mockRejectedValue(new HttpError(404, 'not in queue'));
+    await expect(queueQueries.me('p1').queryFn?.({} as never)).resolves.toBeNull();
+  });
+
 
   test('stats enabled only with productId', async () => {
     getStats.mockResolvedValue({ product_count: 1 });

@@ -4,55 +4,55 @@
     "title": "Наушники Sennheiser Momentum 4 Wireless",
     "description": "Наушники Sennheiser Momentum 4 Wireless",
     "price": 12990,
-    "image": "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=900&q=80"
+    "image": "/assets/wireless-headphones.jpg"
   },
   {
     "id": "gaming-console",
     "title": "Игровая консоль PlayStation 5 Slim Digital Edition",
     "description": "Компактная консоль нового поколения для дома.",
     "price": 49990,
-    "image": "https://images.unsplash.com/photo-1606144042614-b2417e99c4e3?auto=format&fit=crop&w=900&q=80"
+    "image": "/assets/gaming-console.jpg"
   },
   {
     "id": "smart-watch",
     "title": "Смарт-часы HUAWEI WATCH GT 6 Pro 46 mm",
     "description": "Отслеживают тренировки, сон и уведомления.",
     "price": 18990,
-    "image": "https://images.unsplash.com/photo-1524805444758-089113d48a6d?auto=format&fit=crop&w=900&q=80"
+    "image": "/assets/smart-watch.jpg"
   },
   {
     "id": "macbook-air",
     "title": "Ноутбук Apple MacBook Air 13 M4",
     "description": "Лёгкий ноутбук для работы, учёбы и творчества.",
     "price": 119990,
-    "image": "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=900&q=80"
+    "image": "/assets/macbook-air.jpg"
   },
   {
     "id": "mirrorless-camera",
     "title": "Камера Sony Alpha 7 IV",
     "description": "Полнокадровая камера для фото и видео.",
     "price": 219990,
-    "image": "https://images.unsplash.com/photo-1516035069371-29a1b244cc32?auto=format&fit=crop&w=900&q=80"
+    "image": "/assets/mirrorless-camera.jpg"
   },
   {
     "id": "electric-scooter",
     "title": "Электросамокат Ninebot Max G2",
     "description": "Надёжный городской самокат с большим запасом хода.",
     "price": 74990,
-    "image": "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=900&q=80"
+    "image": "/assets/electric-scooter.jpg"
   },
   {
     "id": "robot-vacuum",
     "title": "Робот-пылесос Dreame L40 Ultra",
     "description": "Влажная и сухая уборка с автоматическим обслуживанием.",
     "price": 69990,
-    "image": "https://images.unsplash.com/photo-1585338447937-7082f8fc763d?auto=format&fit=crop&w=900&q=80"
+    "image": "/assets/robot-vacuum.jpg"
   },
   {
     "id": "coffee-machine",
     "title": "Кофемашина DeLonghi Magnifica Evo",
     "description": "Автоматическая кофемашина для любимых напитков.",
     "price": 54990,
-    "image": "https://images.unsplash.com/photo-1517668808822-9ebb02f2a0e6?auto=format&fit=crop&w=900&q=80"
+    "image": "/assets/coffee-machine.jpg"
   }
 ]

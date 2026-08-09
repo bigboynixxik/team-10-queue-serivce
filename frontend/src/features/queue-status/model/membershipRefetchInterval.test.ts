@@ -9,9 +9,10 @@ describe('membershipRefetchInterval', () => {
     expect(membershipRefetchInterval('SOLD_OUT')).toBe(false);
   });
 
-  test('returns 2000 for active or missing status', () => {
+  test('returns 2000 for active statuses and false without membership', () => {
     expect(membershipRefetchInterval('QUEUED')).toBe(2000);
     expect(membershipRefetchInterval('RIGHT_ACTIVE')).toBe(2000);
-    expect(membershipRefetchInterval(undefined)).toBe(2000);
+    expect(membershipRefetchInterval(undefined)).toBe(false);
   });
 });
+

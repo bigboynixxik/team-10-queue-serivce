@@ -22,6 +22,12 @@ describe('product api schemas', () => {
     expect(() => ProductSchema.parse({ ...validProduct, image: 'not-a-url' })).toThrow();
   });
 
+  test('accepts root-relative asset paths', () => {
+    expect(
+      ProductSchema.parse({ ...validProduct, image: '/assets/wireless-headphones.jpg' }).image,
+    ).toBe('/assets/wireless-headphones.jpg');
+  });
+
   test('parses products fixture', () => {
     const products = ProductsSchema.parse(productsJson);
 

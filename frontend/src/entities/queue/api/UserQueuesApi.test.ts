@@ -30,7 +30,10 @@ describe('UserQueuesApi', () => {
     await expect(userQueuesApi.getAll()).resolves.toEqual([
       { product_id: 'p1', status: 'QUEUED', position: 1 },
     ]);
+    // baseURL уже /me/queues — не дублируем путь
+    expect(axiosMock.get).toHaveBeenCalledWith('', undefined);
   });
+
 
   test('getAll accepts empty list and rejects invalid items', async () => {
     axiosMock.get.mockResolvedValueOnce({ data: [] });

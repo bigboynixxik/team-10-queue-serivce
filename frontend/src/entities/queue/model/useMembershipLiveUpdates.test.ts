@@ -38,9 +38,10 @@ describe('useMembershipLiveUpdates', () => {
     rs.useRealTimers();
   });
 
-  test('does not connect without productId or userId', () => {
-    renderHookWithProviders(() => useMembershipLiveUpdates('', 'user-1'));
-    renderHookWithProviders(() => useMembershipLiveUpdates('p1', ''));
+  test('does not connect without productId, userId or status', () => {
+    renderHookWithProviders(() => useMembershipLiveUpdates('', 'user-1', 'QUEUED'));
+    renderHookWithProviders(() => useMembershipLiveUpdates('p1', '', 'QUEUED'));
+    renderHookWithProviders(() => useMembershipLiveUpdates('p1', 'user-1'));
 
     expect(connect).not.toHaveBeenCalled();
   });
@@ -49,7 +50,9 @@ describe('useMembershipLiveUpdates', () => {
     const queryClient = createTestQueryClient();
     queryClient.setQueryData(queueMembershipQueryKey('p1'), { status: 'PURCHASED' });
 
-    renderHookWithProviders(() => useMembershipLiveUpdates('p1', 'user-1'), { queryClient });
+    renderHookWithProviders(() => useMembershipLiveUpdates('p1', 'user-1', 'PURCHASED'), {
+      queryClient,
+    });
 
     expect(connect).not.toHaveBeenCalled();
   });
@@ -57,7 +60,9 @@ describe('useMembershipLiveUpdates', () => {
   test('writes membership updates into cache', () => {
     const queryClient = createTestQueryClient();
 
-    renderHookWithProviders(() => useMembershipLiveUpdates('p1', 'user-1'), { queryClient });
+    renderHookWithProviders(() => useMembershipLiveUpdates('p1', 'user-1', 'QUEUED'), {
+      queryClient,
+    });
 
     act(() => {
       latestListeners?.onMembership({ status: 'QUEUED' });
@@ -70,7 +75,9 @@ describe('useMembershipLiveUpdates', () => {
     const queryClient = createTestQueryClient();
     const invalidateSpy = rs.spyOn(queryClient, 'invalidateQueries');
 
-    renderHookWithProviders(() => useMembershipLiveUpdates('p1', 'user-1'), { queryClient });
+    renderHookWithProviders(() => useMembershipLiveUpdates('p1', 'user-1', 'QUEUED'), {
+      queryClient,
+    });
 
     expect(connect).toHaveBeenCalledTimes(1);
 
@@ -91,10 +98,13 @@ describe('useMembershipLiveUpdates', () => {
   });
 
   test('disconnects on unmount', () => {
-    const { unmount } = renderHookWithProviders(() => useMembershipLiveUpdates('p1', 'user-1'));
+    const { unmount } = renderHookWithProviders(() =>
+      useMembershipLiveUpdates('p1', 'user-1', 'QUEUED'),
+    );
 
     unmount();
 
     expect(disconnect).toHaveBeenCalled();
   });
 });
+
