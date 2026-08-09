@@ -84,9 +84,10 @@ func run() error {
 	}
 	shutdown.Add(func(context.Context) error { return redisClient.Close() })
 
+	cacheRepo := redis.NewCacheRepo(redisClient)
 	queueService := service.NewQueueService(
 		postgres.NewDurableRepo(pool),
-		redis.NewCacheRepo(redisClient),
+		cacheRepo,
 		avito.New(cfg.AvitoBaseURL, cfg.InternalToken, 0),
 		cfg.OfferTTL,
 		cfg.RightTTL,
@@ -95,7 +96,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           api.NewRouter(api.NewQueueHandler(queueService), log, cfg.InternalToken),
+		Handler:           api.NewRouter(api.NewQueueHandler(queueService, cacheRepo), log, cfg.InternalToken),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 	shutdown.Add(srv.Shutdown)

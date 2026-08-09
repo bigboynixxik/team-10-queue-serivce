@@ -13,12 +13,13 @@ import (
 
 // QueueHandler serves the queue and rights endpoints.
 type QueueHandler struct {
-	service transport.QueueService
+	service  transport.QueueService
+	realtime transport.RealtimeSubscriber
 }
 
-// NewQueueHandler creates the handler over the given service.
-func NewQueueHandler(service transport.QueueService) *QueueHandler {
-	return &QueueHandler{service: service}
+// NewQueueHandler creates the handler over the service and realtime event source.
+func NewQueueHandler(service transport.QueueService, realtime transport.RealtimeSubscriber) *QueueHandler {
+	return &QueueHandler{service: service, realtime: realtime}
 }
 
 // APIPrefix versions the public API. Everything a client calls lives behind it,
