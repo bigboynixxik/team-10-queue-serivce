@@ -29,15 +29,25 @@ var (
 		return 0
 	`)
 
+	// allocateScript decides what a newcomer gets. The queue length is checked
+	// here, inside the same atomic step as the allocation itself: if anyone is
+	// already waiting, a newcomer must join the tail rather than take a unit that
+	// belongs to the head of the queue (docs/design_context.md, FIFO is the only
+	// fairness policy).
 	allocateScript = redis.NewScript(`
 		local stockKey = KEYS[1]
+		local queueKey = KEYS[3]
 		local reqQty = tonumber(ARGV[1])
-		
+
 		local avail = tonumber(redis.call('HGET', stockKey, 'available_units') or '0')
 		local count = tonumber(redis.call('HGET', stockKey, 'product_count') or '0')
 
 		if count == 0 then
 			return {0, 0, 1}
+		end
+
+		if redis.call('ZCARD', queueKey) > 0 then
+			return {0, 0, 0}
 		end
 
 		if avail >= reqQty then
@@ -191,7 +201,12 @@ func (c *CacheRepo) InitStock(ctx context.Context, productID string, totalStock 
 func (c *CacheRepo) TryAllocate(ctx context.Context, productID string, quantity int) (int, int, bool, error) {
 	key := fmt.Sprintf("stock:%s", productID)
 
-	res, err := allocateScript.Run(ctx, c.client, []string{key, queueUpdatesChannel(productID)}, quantity).Result()
+	res, err := allocateScript.Run(
+		ctx,
+		c.client,
+		[]string{key, queueUpdatesChannel(productID), queueKey(productID)},
+		quantity,
+	).Result()
 	if err != nil {
 		return 0, 0, false, fmt.Errorf("redis.CacheRepo.TryAllocate execute script: %w", err)
 	}
@@ -658,6 +673,11 @@ func (c *CacheRepo) GetStock(ctx context.Context, productID string) (productCoun
 	available, _ = strconv.Atoi(res["available_units"])
 
 	return productCount, available, nil
+}
+
+// queueKey names the FIFO queue of a product.
+func queueKey(productID string) string {
+	return fmt.Sprintf("queue:%s", productID)
 }
 
 // joinClaimKey guards a single (product, user) pair while their entry into the
