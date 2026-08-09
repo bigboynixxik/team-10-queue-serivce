@@ -225,15 +225,26 @@ func (s *server) checkoutPage(w http.ResponseWriter, r *http.Request) {
 // browser: the page calls this handler, and it calls Queue Service.
 func (s *server) pay(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Token string `json:"token"`
+		Token     string `json:"token"`
+		ProductID string `json:"product_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Token == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Token == "" || body.ProductID == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	orderID := "order-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if err := s.validateRight(r.Context(), body.Token, body.ProductID); err != nil {
+		slog.Error("validate checkout right", "error", err)
+		status := http.StatusBadGateway
+		if errors.Is(err, errRightUnavailable) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 
+		return
+	}
+
+	orderID := "order-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	if err := s.reportPayment(r.Context(), body.Token, orderID); err != nil {
 		slog.Error("report payment", "error", err)
 		status := http.StatusBadGateway
@@ -246,6 +257,40 @@ func (s *server) pay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"order_id": orderID})
+}
+
+func (s *server) validateRight(ctx context.Context, token, productID string) error {
+	payload, err := json.Marshal(map[string]string{"product_id": productID})
+	if err != nil {
+		return fmt.Errorf("encode validation: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/internal/rights/%s/validate", s.queueBaseURL, token)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("build validation request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if s.internalToken != "" {
+		req.Header.Set(internalTokenHeader, s.internalToken)
+	}
+
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("call queue service: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		return nil
+	case http.StatusNotFound, http.StatusConflict, http.StatusForbidden:
+		return errRightUnavailable
+	default:
+		return fmt.Errorf("%w: %d", errQueueService, resp.StatusCode)
+	}
 }
 
 func (s *server) reportPayment(ctx context.Context, token, orderID string) error {
