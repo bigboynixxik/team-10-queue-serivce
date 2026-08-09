@@ -47,6 +47,45 @@ func NewQueueService(
 	}
 }
 
+// membershipClaimTTL bounds how long one transition may hold the claim. It only
+// has to outlive a normal call; a crashed process releases the user by expiry
+// rather than locking them out.
+const membershipClaimTTL = 5 * time.Second
+
+// joinAwaitAttempts and joinAwaitDelay define how long a losing request waits for
+// the winner to finish.
+const (
+	joinAwaitAttempts = 20
+	joinAwaitDelay    = 25 * time.Millisecond
+)
+
+// awaitConcurrentJoin serves the request that lost the claim. Rather than failing,
+// it waits for the winner to publish the membership and returns it, which is what
+// keeps POST idempotent under a double click (docs/design_context.md, п. 2.1).
+func (s *QueueService) awaitConcurrentJoin(
+	ctx context.Context, productID, userID string,
+) (*models.QueueMembership, *models.Right, error) {
+	for attempt := 0; attempt < joinAwaitAttempts; attempt++ {
+		mem, right, isHandled, err := s.checkIdempotency(ctx, productID, userID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("service.JoinQueue await: %w", err)
+		}
+		if isHandled {
+			return mem, right, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(joinAwaitDelay):
+		}
+	}
+
+	// The winner neither finished nor left a membership behind. Reporting a
+	// conflict is honest: the client may retry, and the claim has a TTL.
+	return nil, nil, models.ErrConcurrentJoin
+}
+
 // JoinQueue acts as the entry point for users requesting to buy a product.
 func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, quantity int) (*models.QueueMembership, *models.Right, error) {
 	log := logger.FromContext(ctx)
@@ -56,6 +95,33 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 	}
 
 	mem, right, isHandled, errIdemp := s.checkIdempotency(ctx, productID, userID)
+	if errIdemp != nil {
+		return nil, nil, fmt.Errorf("service.JoinQueue: %w", errIdemp)
+	}
+	if isHandled {
+		return mem, right, nil
+	}
+
+	// The idempotency check above reads state and decides to create a new
+	// membership, but between those two moments nothing stops a second request
+	// from doing exactly the same. Without a claim, N parallel requests from one
+	// user each allocate their own units and walk away with N rights.
+	won, errClaim := s.cache.ClaimMembership(ctx, productID, userID, membershipClaimTTL)
+	if errClaim != nil {
+		return nil, nil, fmt.Errorf("service.JoinQueue claim: %w", errClaim)
+	}
+	if !won {
+		return s.awaitConcurrentJoin(ctx, productID, userID)
+	}
+	defer func() {
+		if errRelease := s.cache.ReleaseMembershipClaim(context.WithoutCancel(ctx), productID, userID); errRelease != nil {
+			log.WarnContext(ctx, "failed to release join claim", slog.Any("error", errRelease))
+		}
+	}()
+
+	// State may have changed while waiting for the claim, so the idempotency
+	// check is repeated — this time under exclusive access.
+	mem, right, isHandled, errIdemp = s.checkIdempotency(ctx, productID, userID)
 	if errIdemp != nil {
 		return nil, nil, fmt.Errorf("service.JoinQueue: %w", errIdemp)
 	}
@@ -213,6 +279,24 @@ func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string
 	if acceptedQuantity <= 0 {
 		return nil, models.ErrQuantityInvalid
 	}
+
+	// Same race as JoinQueue had: the status check and the write are separate
+	// steps, so N parallel accepts each pass the check and each issue a right —
+	// ten of them turned an offer of two units into ten active rights.
+	won, errClaim := s.cache.ClaimMembership(ctx, productID, userID, membershipClaimTTL)
+	if errClaim != nil {
+		return nil, fmt.Errorf("service.AcceptOffer claim: %w", errClaim)
+	}
+	if !won {
+		return s.awaitConcurrentAccept(ctx, productID, userID)
+	}
+	defer func() {
+		if errRelease := s.cache.ReleaseMembershipClaim(
+			context.WithoutCancel(ctx), productID, userID,
+		); errRelease != nil {
+			log.WarnContext(ctx, "failed to release membership claim", slog.Any("error", errRelease))
+		}
+	}()
 
 	mem, err := s.cache.GetMembership(ctx, productID, userID)
 	if err != nil {
@@ -664,91 +748,6 @@ func (s *QueueService) ProcessPayment(ctx context.Context, token string, orderID
 }
 
 // ProcessExpirations scans for expired offers or payment rights, rolls back their stock,
-// updates their membership status, and advances the queue for each affected product.
-func (s *QueueService) ProcessExpirations(ctx context.Context) error {
-	log := logger.FromContext(ctx)
-	now := time.Now().UTC()
-
-	expiredKeys, err := s.cache.GetAndRemoveExpired(ctx, now)
-	if err != nil {
-		return fmt.Errorf("service.ProcessExpirations fetch expired: %w", err)
-	}
-
-	if len(expiredKeys) == 0 {
-		return nil
-	}
-
-	for _, key := range expiredKeys {
-		productID, userID, found := parseExpiredKey(key)
-		if !found {
-			log.ErrorContext(ctx, "malformed expired key format", slog.String("key", key))
-			continue
-		}
-
-		mem, err := s.cache.GetMembership(ctx, productID, userID)
-		if err != nil {
-			log.ErrorContext(ctx, "failed to get membership for expired item", slog.Any("error", err), slog.String("key", key))
-			retryAt := now.Add(time.Second)
-			if errRetry := s.cache.AddToExpiryTimer(ctx, productID, userID, retryAt); errRetry != nil {
-				log.ErrorContext(ctx, "failed to reschedule expiration after membership fetch", slog.Any("error", errRetry))
-			}
-			continue
-		}
-
-		// Если пользователь уже оплатил или сам отменил, таймер неактуален
-		if mem.Status != models.MembershipStatusOfferPending && mem.Status != models.MembershipStatusRightActive {
-			continue
-		}
-		if mem.Status == models.MembershipStatusRightActive {
-			if errExpire := s.expireActiveRight(ctx, mem, false); errExpire != nil {
-				log.ErrorContext(ctx, "failed to expire active right", slog.Any("error", errExpire), slog.String("user_id", userID))
-				if !errors.Is(errExpire, models.ErrInvalidStatus) {
-					retryAt := now.Add(time.Second)
-					if errRetry := s.cache.AddToExpiryTimer(ctx, productID, userID, retryAt); errRetry != nil {
-						log.ErrorContext(ctx, "failed to reschedule right expiration", slog.Any("error", errRetry))
-					}
-				}
-			}
-			continue
-		}
-
-		if mem.AvailableQuantity == nil {
-			log.ErrorContext(ctx, "expired offer has no available quantity", slog.String("user_id", userID))
-			continue
-		}
-		returnedQty := *mem.AvailableQuantity
-
-		mem.Status = models.MembershipStatusDeclined // Используем статус сброса/истечения
-		mem.AvailableQuantity = nil
-		mem.CurrentToken = nil
-		mem.ExpiresAt = nil
-		mem.UpdatedAt = now
-
-		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
-			log.ErrorContext(ctx, "failed to upsert expired membership", slog.Any("error", errUpsert), slog.String("user_id", userID))
-			retryAt := now.Add(time.Second)
-			if errRetry := s.cache.AddToExpiryTimer(ctx, productID, userID, retryAt); errRetry != nil {
-				log.ErrorContext(ctx, "failed to reschedule expiration after durable update", slog.Any("error", errRetry))
-			}
-			continue
-		}
-
-		s.syncCacheState(ctx, mem, nil)
-
-		if returnedQty > 0 {
-			if errRestore := s.cache.RestoreAvailableUnits(ctx, productID, returnedQty); errRestore != nil {
-				log.ErrorContext(ctx, "failed to restore units on expiration", slog.Any("error", errRestore))
-			}
-		}
-
-		if errAdvance := s.AdvanceQueue(ctx, productID); errAdvance != nil {
-			log.ErrorContext(ctx, "failed to advance queue after expiration", slog.Any("error", errAdvance), slog.String("product_id", productID))
-		}
-	}
-
-	return nil
-}
-
 // parseExpiredKey is a small helper to split the "productID:userID" string.
 func parseExpiredKey(key string) (string, string, bool) {
 	for i := 0; i < len(key); i++ {
@@ -757,4 +756,43 @@ func parseExpiredKey(key string) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// awaitConcurrentAccept serves the accept request that lost the claim.
+//
+// A double click on «take N» should not punish the user: if the winner already
+// turned the offer into a right, that right is returned as is. Only when the
+// offer is gone without a right behind it does this report a conflict.
+func (s *QueueService) awaitConcurrentAccept(
+	ctx context.Context, productID, userID string,
+) (*models.Right, error) {
+	for attempt := 0; attempt < joinAwaitAttempts; attempt++ {
+		mem, err := s.cache.GetMembership(ctx, productID, userID)
+		if err != nil {
+			return nil, fmt.Errorf("service.AcceptOffer await: %w", err)
+		}
+
+		if mem.Status == models.MembershipStatusRightActive && mem.CurrentToken != nil {
+			right, errRight := s.cache.GetRight(ctx, *mem.CurrentToken)
+			if errRight != nil {
+				return nil, fmt.Errorf("service.AcceptOffer await right: %w", errRight)
+			}
+
+			return right, nil
+		}
+
+		// The offer is no longer pending and no right came out of it: the winner
+		// declined it, or it expired. There is nothing left to accept.
+		if mem.Status != models.MembershipStatusOfferPending {
+			return nil, models.ErrInvalidStatus
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(joinAwaitDelay):
+		}
+	}
+
+	return nil, models.ErrConcurrentJoin
 }

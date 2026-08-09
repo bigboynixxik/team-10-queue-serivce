@@ -73,6 +73,14 @@ type CacheRepo interface {
 	// GetRight retrieves a cached right by its token.
 	GetRight(ctx context.Context, token string) (*models.Right, error)
 
+	// ClaimMembership marks the start of a membership transition and reports
+	// whether the caller won it. Losing means a concurrent request for the same
+	// user is in flight.
+	ClaimMembership(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error)
+
+	// ReleaseMembershipClaim frees the claim once the transition is decided.
+	ReleaseMembershipClaim(ctx context.Context, productID, userID string) error
+
 	// GetStock reads the cached stock counters of a product.
 	GetStock(ctx context.Context, productID string) (productCount, available int, err error)
 
@@ -96,8 +104,19 @@ type CacheRepo interface {
 	// GetFirstInQueue retrieves the first user ID from the queue without removing it.
 	GetFirstInQueue(ctx context.Context, productID string) (string, error)
 
-	// GetAndRemoveExpired atomically retrieves and removes items from the expiry timer that have timed out.
-	GetAndRemoveExpired(ctx context.Context, now time.Time) ([]string, error)
+	// ClaimExpired takes up to limit due timers under a lease. Unacknowledged
+	// items return to the schedule once the lease runs out, so a crashed worker
+	// delays the work instead of losing it.
+	ClaimExpired(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]string, error)
+
+	// AckExpired confirms that claimed timers were handled.
+	AckExpired(ctx context.Context, keys []string) error
+
+	// NackExpired returns claimed timers to the schedule after a failed attempt.
+	NackExpired(ctx context.Context, keys []string, retryAt time.Time) error
+
+	// ReclaimStaleExpired returns timers whose lease expired and reports how many.
+	ReclaimStaleExpired(ctx context.Context, now time.Time) (int, error)
 
 	// PopAndAllocate atomically reads the first user in the queue, checks their status,
 	// removes them if applicable, and allocates available stock.

@@ -13,7 +13,7 @@ import (
 // TestAcceptOffer_Success_Full verifies that accepting the exact offered quantity
 // successfully creates an active right and updates the user's status to RIGHT_ACTIVE.
 func (s *QueueServiceTestSuite) TestAcceptOffer_Success_Full() {
-	s.mockMembershipFetch(models.MembershipStatusOfferPending, ptr(2))
+	s.mockAcceptOfferFetch(models.MembershipStatusOfferPending, ptr(2))
 
 	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Cond(func(x any) bool {
 		r, ok := x.(*models.Right)
@@ -34,7 +34,7 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_Success_Full() {
 // TestAcceptOffer_Success_Partial verifies that accepting less than the offered quantity
 // creates an active right, restores the unused stock to the pool, and advances the queue.
 func (s *QueueServiceTestSuite) TestAcceptOffer_Success_Partial() {
-	s.mockMembershipFetch(models.MembershipStatusOfferPending, ptr(5))
+	s.mockAcceptOfferFetch(models.MembershipStatusOfferPending, ptr(5))
 
 	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Cond(func(x any) bool {
 		r, ok := x.(*models.Right)
@@ -58,6 +58,10 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_Success_Partial() {
 // current membership state from the cache aborts the acceptance process.
 func (s *QueueServiceTestSuite) TestAcceptOffer_MembershipFetchError() {
 	expectedErr := errors.New("redis timeout")
+	s.mockCache.EXPECT().
+		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).
+		Return(true, nil)
+	s.mockCache.EXPECT().ReleaseMembershipClaim(gomock.Any(), "prod-1", "user-1").Return(nil)
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(nil, expectedErr)
 
 	right, err := s.srv.AcceptOffer(s.ctx, "prod-1", "user-1", 2)
@@ -78,7 +82,7 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_InvalidQuantity() {
 // TestAcceptOffer_InvalidStatus verifies that accepting an offer is rejected if the user
 // is not currently in the OFFER_PENDING state.
 func (s *QueueServiceTestSuite) TestAcceptOffer_InvalidStatus() {
-	s.mockMembershipFetch(models.MembershipStatusQueued, nil)
+	s.mockAcceptOfferFetch(models.MembershipStatusQueued, nil)
 
 	right, err := s.srv.AcceptOffer(s.ctx, "prod-1", "user-1", 2)
 
@@ -89,7 +93,7 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_InvalidStatus() {
 // TestAcceptOffer_NilAvailableQuantity verifies that corrupted membership data with a missing
 // available quantity pointer aborts the operation to prevent nil pointer dereferences.
 func (s *QueueServiceTestSuite) TestAcceptOffer_NilAvailableQuantity() {
-	s.mockMembershipFetch(models.MembershipStatusOfferPending, nil)
+	s.mockAcceptOfferFetch(models.MembershipStatusOfferPending, nil)
 
 	right, err := s.srv.AcceptOffer(s.ctx, "prod-1", "user-1", 2)
 
@@ -100,7 +104,7 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_NilAvailableQuantity() {
 // TestAcceptOffer_ExceedsAvailable verifies that requesting more items than initially
 // offered is rejected with a strict boundary error.
 func (s *QueueServiceTestSuite) TestAcceptOffer_ExceedsAvailable() {
-	s.mockMembershipFetch(models.MembershipStatusOfferPending, ptr(2))
+	s.mockAcceptOfferFetch(models.MembershipStatusOfferPending, ptr(2))
 
 	right, err := s.srv.AcceptOffer(s.ctx, "prod-1", "user-1", 5)
 
@@ -111,7 +115,7 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_ExceedsAvailable() {
 // TestAcceptOffer_SaveRightError verifies that a database failure during the creation
 // of the purchase right correctly propagates the error upward.
 func (s *QueueServiceTestSuite) TestAcceptOffer_SaveRightError() {
-	s.mockMembershipFetch(models.MembershipStatusOfferPending, ptr(2))
+	s.mockAcceptOfferFetch(models.MembershipStatusOfferPending, ptr(2))
 
 	dbErr := errors.New("db save right error")
 	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Any()).Return(dbErr)
@@ -120,4 +124,49 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_SaveRightError() {
 
 	require.ErrorIs(s.T(), err, dbErr)
 	assert.Nil(s.T(), right)
+}
+
+// TestAcceptOffer_ConcurrentClaimLost verifies that a second click on «take N»
+// returns the right the first one produced, instead of issuing another. Without
+// the claim, ten parallel accepts turned an offer of two units into ten rights.
+func (s *QueueServiceTestSuite) TestAcceptOffer_ConcurrentClaimLost() {
+	token := "winner-token"
+	right := &models.Right{Token: token, UserID: "user-1", ProductID: "prod-1", Quantity: 2}
+	mem := &models.QueueMembership{
+		ProductID:    "prod-1",
+		UserID:       "user-1",
+		Status:       models.MembershipStatusRightActive,
+		CurrentToken: &token,
+	}
+
+	s.mockCache.EXPECT().
+		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).
+		Return(false, nil)
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
+	s.mockCache.EXPECT().GetRight(s.ctx, token).Return(right, nil)
+
+	got, err := s.srv.AcceptOffer(s.ctx, "prod-1", "user-1", 2)
+
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), right, got, "the loser must return the winner's right, not a new one")
+}
+
+// TestAcceptOffer_ConcurrentOfferGone verifies that losing the claim to a decline
+// reports a conflict rather than inventing a right out of nothing.
+func (s *QueueServiceTestSuite) TestAcceptOffer_ConcurrentOfferGone() {
+	mem := &models.QueueMembership{
+		ProductID: "prod-1",
+		UserID:    "user-1",
+		Status:    models.MembershipStatusDeclined,
+	}
+
+	s.mockCache.EXPECT().
+		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).
+		Return(false, nil)
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
+
+	got, err := s.srv.AcceptOffer(s.ctx, "prod-1", "user-1", 2)
+
+	require.ErrorIs(s.T(), err, models.ErrInvalidStatus)
+	assert.Nil(s.T(), got)
 }
