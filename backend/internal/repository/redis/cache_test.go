@@ -811,3 +811,41 @@ func (s *CacheTestSuite) TestRefreshExpiryTimer_ExtendsExistingTimerOnlyForward(
 	_, err = s.client.ZScore(s.ctx, "expiring:rights", member).Result()
 	require.ErrorIs(s.T(), err, redis.Nil)
 }
+
+// TestTryAllocate_RespectsQueue verifies that a newcomer cannot take a freed unit
+// while somebody is already waiting for it. Allocation and the queue check happen
+// in one atomic step, so no window exists in which the newcomer could win.
+func (s *CacheTestSuite) TestTryAllocate_RespectsQueue() {
+	ctx := s.ctx
+	productID := "queued-product"
+
+	s.Require().NoError(s.repo.InitStock(ctx, productID, 1))
+
+	// Somebody is waiting in line.
+	s.Require().NoError(s.repo.Enqueue(ctx, productID, "waiting-user"))
+
+	// A unit is free, but it belongs to the head of the queue.
+	s.Require().NoError(s.repo.RestoreAvailableUnits(ctx, productID, 1))
+
+	allocated, available, soldOut, err := s.repo.TryAllocate(ctx, productID, 1)
+
+	s.Require().NoError(err)
+	s.Equal(0, allocated, "newcomer must not receive a right")
+	s.Equal(0, available, "newcomer must not receive a partial offer either")
+	s.False(soldOut)
+}
+
+// TestTryAllocate_EmptyQueueAllocates verifies the opposite case: with nobody
+// waiting, a newcomer is served immediately and no needless queueing happens.
+func (s *CacheTestSuite) TestTryAllocate_EmptyQueueAllocates() {
+	ctx := s.ctx
+	productID := "free-product"
+
+	s.Require().NoError(s.repo.InitStock(ctx, productID, 2))
+
+	allocated, _, soldOut, err := s.repo.TryAllocate(ctx, productID, 2)
+
+	s.Require().NoError(err)
+	s.Equal(2, allocated)
+	s.False(soldOut)
+}
