@@ -90,6 +90,7 @@ func run() error {
 		avito.New(cfg.AvitoBaseURL, cfg.InternalToken, 0),
 		cfg.OfferTTL,
 		cfg.RightTTL,
+		cfg.AvgPaymentTime,
 	)
 
 	srv := &http.Server{

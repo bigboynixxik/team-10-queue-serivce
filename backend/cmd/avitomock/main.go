@@ -31,7 +31,10 @@ const (
 	internalTokenHeader = "X-Internal-Token" //nolint:gosec // header name, not a credential
 )
 
-var errQueueService = errors.New("queue service rejected the event")
+var (
+	errQueueService     = errors.New("queue service rejected the event")
+	errRightUnavailable = errors.New("право на покупку больше не действует")
+)
 
 // stock keeps the physical stock per product. A product nobody asked about yet
 // starts at defaultStock, which is what makes the mock usable without seeding.
@@ -233,7 +236,11 @@ func (s *server) pay(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.reportPayment(r.Context(), body.Token, orderID); err != nil {
 		slog.Error("report payment", "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		status := http.StatusBadGateway
+		if errors.Is(err, errRightUnavailable) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 
 		return
 	}
@@ -265,6 +272,9 @@ func (s *server) reportPayment(ctx context.Context, token, orderID string) error
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return errRightUnavailable
+	}
 	if resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("%w: %d", errQueueService, resp.StatusCode)
 	}

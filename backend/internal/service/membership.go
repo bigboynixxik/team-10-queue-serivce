@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"backend/internal/models"
 )
@@ -20,4 +21,24 @@ func (s *QueueService) GetMembership(ctx context.Context, productID, userID stri
 	}
 
 	return mem, nil
+}
+
+// CalculateETA computes the user's human-readable position in the queue (1-indexed)
+// and the estimated wait time before they receive an offer or right.
+func (s *QueueService) CalculateETA(ctx context.Context, productID, userID string) (int, time.Duration, error) {
+	rank, availableUnits, err := s.cache.GetQueueMetrics(ctx, productID, userID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("service.CalculateETA get metrics: %w", err)
+	}
+
+	position := rank + 1
+	effectiveWaiters := position - availableUnits
+
+	if effectiveWaiters <= 0 {
+		return position, 0, nil
+	}
+
+	eta := time.Duration(effectiveWaiters) * s.avgPaymentTime
+
+	return position, eta, nil
 }

@@ -3,6 +3,7 @@ package transport
 
 import (
 	"context"
+	"time"
 
 	"backend/internal/models"
 )
@@ -17,6 +18,17 @@ type QueueService interface {
 	// the polling read and every push of the realtime channel.
 	GetMembership(ctx context.Context, productID, userID string) (*models.QueueMembership, error)
 
+	// GetQueueStats reports public demand for a product: how many people wait,
+	// how many are mid-purchase, and how much stock is left.
+	GetQueueStats(ctx context.Context, productID string) (*models.QueueStats, error)
+
+	// GetUserQueue returns one membership together with the user's place in it.
+	GetUserQueue(ctx context.Context, productID, userID string) (*models.UserQueue, error)
+
+	// GetUserQueues returns every queue the user takes part in, each with their
+	// position and estimated wait.
+	GetUserQueues(ctx context.Context, userID string) ([]*models.UserQueue, error)
+
 	// AcceptOffer confirms a partial offer. The user can accept less than initially offered.
 	// Any unused quantity is automatically returned to the pool for the next in line.
 	AcceptOffer(ctx context.Context, productID, userID string, acceptedQuantity int) (*models.Right, error)
@@ -24,6 +36,10 @@ type QueueService interface {
 	// DeclineOffer rejects a pending offer. The reserved stock is returned to the pool,
 	// and the queue is advanced.
 	DeclineOffer(ctx context.Context, productID, userID string) error
+
+	// LeaveQueue ends the user's participation, whether they are waiting,
+	// considering a partial offer, or hold an active purchase right.
+	LeaveQueue(ctx context.Context, productID, userID string) error
 
 	// ValidateRight checks if a given token is valid, active, and belongs to the requesting user.
 	ValidateRight(ctx context.Context, token, userID string) (*models.Right, error)
@@ -34,4 +50,8 @@ type QueueService interface {
 	// AdvanceQueue acts as an internal engine to push the queue forward when stock frees up.
 	// It is typically called internally after declines, expirations, or partial accepts.
 	AdvanceQueue(ctx context.Context, productID string) error
+
+	// CalculateETA computes the user's human-readable position in the queue (1-indexed)
+	// and the estimated wait time in seconds before they receive an offer or right.
+	CalculateETA(ctx context.Context, productID string, userID string) (position int, etaSeconds time.Duration, err error)
 }

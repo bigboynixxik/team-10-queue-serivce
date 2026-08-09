@@ -40,6 +40,36 @@ type membershipResponse struct {
 	Quantity          int                     `json:"quantity,omitempty"`
 	AvailableQuantity int                     `json:"available_quantity,omitempty"`
 	ExpiresAt         *time.Time              `json:"expires_at,omitempty"`
+	Position          int                     `json:"position,omitempty"`
+	ETASeconds        int                     `json:"eta_seconds,omitempty"`
+}
+
+// userQueueResponse is one row of the «Мои очереди» list: the same membership
+// shape the single-queue endpoint returns, plus the product it belongs to.
+type userQueueResponse struct {
+	ProductID string `json:"product_id"`
+	membershipResponse
+}
+
+func newUserQueueResponse(q *models.UserQueue) userQueueResponse {
+	if q == nil || q.Membership == nil {
+		return userQueueResponse{}
+	}
+
+	resp := newMembershipResponse(q.Membership)
+	resp.Position = q.Position
+	resp.ETASeconds = int(q.ETA.Seconds())
+
+	return userQueueResponse{ProductID: q.Membership.ProductID, membershipResponse: resp}
+}
+
+func newUserQueuesResponse(queues []*models.UserQueue) []userQueueResponse {
+	out := make([]userQueueResponse, 0, len(queues))
+	for _, q := range queues {
+		out = append(out, newUserQueueResponse(q))
+	}
+
+	return out
 }
 
 func newMembershipResponse(m *models.QueueMembership) membershipResponse {
@@ -81,5 +111,30 @@ func newRightResponse(r *models.Right) membershipResponse {
 		Token:     r.Token,
 		Quantity:  r.Quantity,
 		ExpiresAt: &expiresAt,
+	}
+}
+
+// statsResponse is the body of GET /api/v1/queue/{product_id}/stats. All fields
+// are always present — a zero is meaningful here, unlike in membershipResponse
+// where an absent field means "not applicable to this status".
+type statsResponse struct {
+	Waiting      int `json:"waiting"`
+	HoldingRight int `json:"holding_right"`
+	PendingOffer int `json:"pending_offer"`
+	Available    int `json:"available"`
+	ProductCount int `json:"product_count"`
+}
+
+func newStatsResponse(s *models.QueueStats) statsResponse {
+	if s == nil {
+		return statsResponse{}
+	}
+
+	return statsResponse{
+		Waiting:      s.Waiting,
+		HoldingRight: s.HoldingRight,
+		PendingOffer: s.PendingOffer,
+		Available:    s.Available,
+		ProductCount: s.ProductCount,
 	}
 }

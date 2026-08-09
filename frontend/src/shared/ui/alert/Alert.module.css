@@ -1,0 +1,47 @@
+.Alert {
+  border: 1px solid;
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--surface);
+}
+
+.Alert--dismissible {
+  position: relative;
+  padding-right: 48px;
+}
+
+.Alert--error {
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.Alert--info {
+  color: #1e40af;
+  border-color: #bfdbfe;
+}
+
+.Alert--success {
+  color: #166534;
+  border-color: #bbf7d0;
+}
+
+.Alert__title {
+  display: block;
+}
+
+.Alert__description {
+  margin: 4px 0 0;
+}
+
+.Alert__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 0;
+  padding: 4px 8px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}

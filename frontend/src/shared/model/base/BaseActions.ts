@@ -1,3 +1,3 @@
 export type BaseStoreActions = {
-	reset: () => void;
+  reset: () => void;
 };

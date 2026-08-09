@@ -1,10 +1,11 @@
-import { API_BASE_URL } from '@shared/config';
 import axios, {
   type AxiosError,
   type AxiosInstance,
   type AxiosRequestConfig,
   type AxiosResponse,
 } from 'axios';
+
+import { API_BASE_URL, USER_ID_STORAGE_KEY } from '@shared/config';
 
 import BadRequest from './error/BadRequest';
 import { getApiErrorMessages } from './error/get-api-error-messages';
@@ -49,6 +50,13 @@ abstract class HttpClient {
       (response: AxiosResponse) => response,
       (error: AxiosError) => this.handleError(error),
     );
+    this.instance.interceptors.request.use((config) => {
+      const userId = localStorage.getItem(USER_ID_STORAGE_KEY);
+
+      if (userId) config.headers.set('X-User-Id', userId);
+
+      return config;
+    });
   }
 
   protected get uri(): string {
@@ -103,17 +111,13 @@ abstract class HttpClient {
       .then((response: AxiosResponse<Response>) => response.data);
   }
 
-  protected getTokenConfig(token: string): AxiosRequestConfig {
-    return {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    };
-  }
-
   private handleError(error: AxiosError): Promise<never> {
     const status = error.response?.status ?? error.status;
     const messages = getApiErrorMessages(error, error.message);
+    const responseStatus =
+      typeof error.response?.data === 'object' && error.response.data !== null
+        ? (error.response.data as { status?: unknown }).status
+        : undefined;
 
     switch (status) {
       case 400:
@@ -122,6 +126,11 @@ abstract class HttpClient {
         return Promise.reject(new NoAccess());
       case 404:
         return Promise.reject(new NotFoundError(messages));
+      case 409:
+        // 409 с sold_out это конец товара а не общий конфликт
+        return Promise.reject(
+          new HttpError(status, responseStatus === 'SOLD_OUT' ? 'Товара больше нет' : messages),
+        );
       case 500:
         return Promise.reject(new ServerError(messages));
       default:

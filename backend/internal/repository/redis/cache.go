@@ -44,6 +44,7 @@ var (
 		end
 
 		if avail > 0 then
+			redis.call('HINCRBY', stockKey, 'available_units', -avail)
 			return {0, avail, 0}
 		end
 
@@ -457,4 +458,61 @@ func (c *CacheRepo) Requeue(ctx context.Context, productID string, userID string
 		return fmt.Errorf("redis.CacheRepo.Requeue: %w", err)
 	}
 	return nil
+}
+
+// GetQueueMetrics retrieves the user's 0-indexed rank in the queue and the currently available stock.
+// It uses a pipeline to fetch both values in a single network round-trip.
+func (c *CacheRepo) GetQueueMetrics(ctx context.Context, productID string, userID string) (int, int, error) {
+	queueKey := fmt.Sprintf("queue:%s", productID)
+	stockKey := fmt.Sprintf("stock:%s", productID)
+
+	pipe := c.client.Pipeline()
+	rankCmd := pipe.ZRank(ctx, queueKey, userID)
+	availCmd := pipe.HGet(ctx, stockKey, "available_units")
+
+	// Exec returns redis.Nil if ANY of the pipeline commands return redis.Nil.
+	// We safely ignore it here and check the specific command results below.
+	_, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return 0, 0, fmt.Errorf("redis.CacheRepo.GetQueueMetrics pipeline exec: %w", err)
+	}
+
+	rank, err := rankCmd.Result()
+	if errors.Is(err, redis.Nil) {
+		// User is completely out of the ZSET queue.
+		return 0, 0, models.ErrMembershipNotFound
+	} else if err != nil {
+		return 0, 0, fmt.Errorf("redis.CacheRepo.GetQueueMetrics rank: %w", err)
+	}
+
+	var available int
+	availStr, err := availCmd.Result()
+	if err == nil && availStr != "" {
+		if parsed, parseErr := strconv.Atoi(availStr); parseErr == nil {
+			available = parsed
+		}
+	}
+
+	// rank is 0-indexed. The mathematical offset is handled in the service layer.
+	return int(rank), available, nil
+}
+
+// GetStock reads the cached stock counters of a product. It returns
+// models.ErrTokenNotFound when the product has never been touched — Queue
+// Service only learns about a product when someone first tries to buy it.
+func (c *CacheRepo) GetStock(ctx context.Context, productID string) (productCount, available int, err error) {
+	key := fmt.Sprintf("stock:%s", productID)
+
+	res, err := c.client.HGetAll(ctx, key).Result()
+	if err != nil {
+		return 0, 0, fmt.Errorf("redis.CacheRepo.GetStock execute: %w", err)
+	}
+	if len(res) == 0 {
+		return 0, 0, fmt.Errorf("redis.CacheRepo.GetStock not found: %w", models.ErrTokenNotFound)
+	}
+
+	productCount, _ = strconv.Atoi(res["product_count"])
+	available, _ = strconv.Atoi(res["available_units"])
+
+	return productCount, available, nil
 }

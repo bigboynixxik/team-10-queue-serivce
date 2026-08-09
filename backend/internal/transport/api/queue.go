@@ -42,23 +42,39 @@ func (h *QueueHandler) join(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusCreated, resp)
 }
 
-// status handles GET /queue/{product_id}/members/me. One resource serves both the
-// polling fallback and the realtime channel, switched by the Upgrade header.
+// status handles GET /queue/{product_id}/members/me. One resource, three modes:
+// a plain read, a WebSocket (Upgrade header) and an SSE feed (Accept header).
+// The two realtime modes coexist so that adding SSE breaks no existing client.
 func (h *QueueHandler) status(w http.ResponseWriter, r *http.Request) {
 	if isWebSocketUpgrade(r) {
 		h.stream(w, r)
 		return
 	}
 
-	membership, err := h.service.GetMembership(
-		r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()),
-	)
+	productID := r.PathValue("product_id")
+	userID := mw.UserFromContext(r.Context())
+
+	view := func() (any, error) {
+		queue, err := h.service.GetUserQueue(r.Context(), productID, userID)
+		if err != nil {
+			return nil, err
+		}
+
+		return newUserQueueResponse(queue).membershipResponse, nil
+	}
+
+	if wantsSSE(r) {
+		streamJSON(w, r, view)
+		return
+	}
+
+	resp, err := view()
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
 
-	writeJSON(w, r, http.StatusOK, newMembershipResponse(membership))
+	writeJSON(w, r, http.StatusOK, resp)
 }
 
 // acceptOffer handles PATCH /queue/{product_id}/members/me.
@@ -81,7 +97,7 @@ func (h *QueueHandler) acceptOffer(w http.ResponseWriter, r *http.Request) {
 
 // leave handles DELETE /queue/{product_id}/members/me.
 func (h *QueueHandler) leave(w http.ResponseWriter, r *http.Request) {
-	err := h.service.DeclineOffer(r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()))
+	err := h.service.LeaveQueue(r.Context(), r.PathValue("product_id"), mw.UserFromContext(r.Context()))
 	if err != nil {
 		writeError(w, r, err)
 		return

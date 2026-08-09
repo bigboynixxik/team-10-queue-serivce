@@ -1,0 +1,16 @@
+.Heading {
+  margin: 0;
+  color: var(--ink);
+}
+
+.Heading--level-1 {
+  font-size: clamp(26px, 4vw, 34px);
+}
+
+.Heading--level-2 {
+  font-size: 24px;
+}
+
+.Heading--level-3 {
+  font-size: 20px;
+}
