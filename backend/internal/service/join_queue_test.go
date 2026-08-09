@@ -68,8 +68,12 @@ func (s *QueueServiceTestSuite) TestJoinQueue_MembershipFetchError() {
 func (s *QueueServiceTestSuite) TestJoinQueue_AvitoError() {
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
 		Return(nil, models.ErrTokenNotFound).Times(2)
-	s.mockCache.EXPECT().ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).Return(true, nil)
-	s.mockCache.EXPECT().ReleaseMembershipClaim(gomock.Any(), "prod-1", "user-1").Return(nil)
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+	).Return(true, nil)
+	s.mockCache.EXPECT().ReleaseMembershipClaim(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(),
+	).Return(nil)
 	expectedErr := errors.New("avito client error")
 	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(0, expectedErr)
 
@@ -206,7 +210,9 @@ func (s *QueueServiceTestSuite) TestJoinQueue_ConcurrentClaimLost() {
 		s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
 			Return(nil, models.ErrTokenNotFound),
 		// The claim is already held by the concurrent request.
-		s.mockCache.EXPECT().ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).
+		s.mockCache.EXPECT().ClaimMembership(
+			gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+		).
 			Return(false, nil),
 		// While waiting, the winner finishes and the membership appears.
 		s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
@@ -226,7 +232,9 @@ func (s *QueueServiceTestSuite) TestJoinQueue_ConcurrentClaimLost() {
 func (s *QueueServiceTestSuite) TestJoinQueue_ConcurrentClaimNeverResolves() {
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
 		Return(nil, models.ErrTokenNotFound).AnyTimes()
-	s.mockCache.EXPECT().ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+	).
 		Return(false, nil)
 
 	mem, right, err := s.srv.JoinQueue(s.ctx, "prod-1", "user-1", 1)

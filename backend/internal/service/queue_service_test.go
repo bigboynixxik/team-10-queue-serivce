@@ -3,6 +3,7 @@ package service_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,8 +56,12 @@ func (s *QueueServiceTestSuite) mockJoinQueueBase(stock, reqQty, alloc, avail in
 	// under it, since state may change while the claim is being acquired.
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
 		Return(nil, models.ErrTokenNotFound).Times(2)
-	s.mockCache.EXPECT().ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).Return(true, nil)
-	s.mockCache.EXPECT().ReleaseMembershipClaim(gomock.Any(), "prod-1", "user-1").Return(nil)
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+	).Return(true, nil)
+	s.mockCache.EXPECT().ReleaseMembershipClaim(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(),
+	).Return(nil)
 	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(stock, nil)
 	s.mockCache.EXPECT().InitStock(s.ctx, "prod-1", stock).Return(nil)
 
@@ -110,13 +115,24 @@ func (s *QueueServiceTestSuite) mockMembershipFetch(status models.MembershipStat
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
 }
 
+func (s *QueueServiceTestSuite) expectMembershipClaim(productID, userID string) {
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), productID, userID, gomock.Any(), gomock.Any(),
+	).Return(true, nil)
+	s.mockCache.EXPECT().ReleaseMembershipClaim(
+		gomock.Any(), productID, userID, gomock.Any(),
+	).Return(nil)
+}
+
 // mockAcceptOfferFetch is mockMembershipFetch plus the membership claim that
 // AcceptOffer takes before deciding anything — the same guard JoinQueue uses.
 func (s *QueueServiceTestSuite) mockAcceptOfferFetch(status models.MembershipStatus, avail *int) {
 	s.mockCache.EXPECT().
-		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).
+		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any()).
 		Return(true, nil)
-	s.mockCache.EXPECT().ReleaseMembershipClaim(gomock.Any(), "prod-1", "user-1").Return(nil)
+	s.mockCache.EXPECT().ReleaseMembershipClaim(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(),
+	).Return(nil)
 	s.mockMembershipFetch(status, avail)
 }
 
@@ -133,9 +149,29 @@ func TestQueueServiceSuite(t *testing.T) {
 // abandoned work and claiming what is due. Acknowledgement is allowed rather than
 // required; a failed item must be nacked explicitly by the test that expects it.
 func (s *QueueServiceTestSuite) expectExpirationClaim(keys []string, err error) {
+	deadline := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	leaseUntil := time.Now().UTC().Add(time.Minute)
+	claims := make([]models.ExpiryClaim, 0, len(keys))
+	for _, key := range keys {
+		claims = append(claims, models.ExpiryClaim{
+			Key: key, Deadline: deadline, LeaseUntil: leaseUntil,
+		})
+
+		productID, userID, found := strings.Cut(key, ":")
+		if !found || productID == "" || userID == "" {
+			continue
+		}
+		s.mockCache.EXPECT().ClaimMembership(
+			gomock.Any(), productID, userID, gomock.Any(), gomock.Any(),
+		).Return(true, nil)
+		s.mockCache.EXPECT().ReleaseMembershipClaim(
+			gomock.Any(), productID, userID, gomock.Any(),
+		).Return(nil)
+	}
+
 	s.mockCache.EXPECT().ReclaimStaleExpired(gomock.Any(), gomock.Any()).Return(0, nil).AnyTimes()
 	s.mockCache.EXPECT().
 		ClaimExpired(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(keys, err)
+		Return(claims, err)
 	s.mockCache.EXPECT().AckExpired(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 }

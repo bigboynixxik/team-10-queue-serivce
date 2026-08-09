@@ -59,9 +59,11 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_Success_Partial() {
 func (s *QueueServiceTestSuite) TestAcceptOffer_MembershipFetchError() {
 	expectedErr := errors.New("redis timeout")
 	s.mockCache.EXPECT().
-		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).
+		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any()).
 		Return(true, nil)
-	s.mockCache.EXPECT().ReleaseMembershipClaim(gomock.Any(), "prod-1", "user-1").Return(nil)
+	s.mockCache.EXPECT().ReleaseMembershipClaim(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(),
+	).Return(nil)
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(nil, expectedErr)
 
 	right, err := s.srv.AcceptOffer(s.ctx, "prod-1", "user-1", 2)
@@ -140,7 +142,7 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_ConcurrentClaimLost() {
 	}
 
 	s.mockCache.EXPECT().
-		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).
+		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any()).
 		Return(false, nil)
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
 	s.mockCache.EXPECT().GetRight(s.ctx, token).Return(right, nil)
@@ -161,7 +163,7 @@ func (s *QueueServiceTestSuite) TestAcceptOffer_ConcurrentOfferGone() {
 	}
 
 	s.mockCache.EXPECT().
-		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any()).
+		ClaimMembership(gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any()).
 		Return(false, nil)
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
 

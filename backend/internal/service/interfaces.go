@@ -76,10 +76,10 @@ type CacheRepo interface {
 	// ClaimMembership marks the start of a membership transition and reports
 	// whether the caller won it. Losing means a concurrent request for the same
 	// user is in flight.
-	ClaimMembership(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error)
+	ClaimMembership(ctx context.Context, productID, userID, ownerID string, ttl time.Duration) (bool, error)
 
-	// ReleaseMembershipClaim frees the claim once the transition is decided.
-	ReleaseMembershipClaim(ctx context.Context, productID, userID string) error
+	// ReleaseMembershipClaim frees the claim only if ownerID still owns it.
+	ReleaseMembershipClaim(ctx context.Context, productID, userID, ownerID string) error
 
 	// GetStock reads the cached stock counters of a product.
 	GetStock(ctx context.Context, productID string) (productCount, available int, err error)
@@ -107,13 +107,13 @@ type CacheRepo interface {
 	// ClaimExpired takes up to limit due timers under a lease. Unacknowledged
 	// items return to the schedule once the lease runs out, so a crashed worker
 	// delays the work instead of losing it.
-	ClaimExpired(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]string, error)
+	ClaimExpired(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]models.ExpiryClaim, error)
 
-	// AckExpired confirms that claimed timers were handled.
-	AckExpired(ctx context.Context, keys []string) error
+	// AckExpired confirms timers only while the caller still owns their lease.
+	AckExpired(ctx context.Context, claims []models.ExpiryClaim) error
 
-	// NackExpired returns claimed timers to the schedule after a failed attempt.
-	NackExpired(ctx context.Context, keys []string, retryAt time.Time) error
+	// NackExpired returns timers only while the caller still owns their lease.
+	NackExpired(ctx context.Context, claims []models.ExpiryClaim, retryAt time.Time) error
 
 	// ReclaimStaleExpired returns timers whose lease expired and reports how many.
 	ReclaimStaleExpired(ctx context.Context, now time.Time) (int, error)

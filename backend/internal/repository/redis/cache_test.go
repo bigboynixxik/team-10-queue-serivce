@@ -531,8 +531,7 @@ func (s *CacheTestSuite) TestClaimExpired_TakesOnlyDueItems() {
 	claimed, err := s.repo.ClaimExpired(s.ctx, now, time.Minute, 10)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), claimed, 2)
-	require.Contains(s.T(), claimed, "prod-exp:user-old1")
-	require.Contains(s.T(), claimed, "prod-exp:user-old2")
+	require.ElementsMatch(s.T(), []string{"prod-exp:user-old1", "prod-exp:user-old2"}, expiryClaimKeys(claimed))
 
 	// The claimed items left the schedule; the one still in the future stays.
 	count, err := s.client.ZCard(s.ctx, "expiring:rights").Result()
@@ -849,7 +848,7 @@ func (s *CacheTestSuite) TestClaimExpired_LeaseSurvivesCrash() {
 
 	claimed, err := s.repo.ClaimExpired(s.ctx, time.Now().UTC(), time.Second, 10)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"crash-prod:crash-user"}, claimed)
+	require.Equal(s.T(), []string{"crash-prod:crash-user"}, expiryClaimKeys(claimed))
 
 	// While the lease holds, the work is invisible to another worker.
 	again, err := s.repo.ClaimExpired(s.ctx, time.Now().UTC(), time.Second, 10)
@@ -866,7 +865,9 @@ func (s *CacheTestSuite) TestClaimExpired_LeaseSurvivesCrash() {
 
 	recovered, err := s.repo.ClaimExpired(s.ctx, afterLease, time.Minute, 10)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"crash-prod:crash-user"}, recovered, "abandoned work must be picked up again")
+	require.Equal(s.T(), []string{"crash-prod:crash-user"}, expiryClaimKeys(recovered), "abandoned work must be picked up again")
+	require.Equal(s.T(), past.Truncate(time.Second), recovered[0].Deadline,
+		"reclaim must preserve the original timer deadline")
 }
 
 // TestAckExpired_DropsWork verifies that acknowledged work is gone for good and
@@ -908,7 +909,7 @@ func (s *CacheTestSuite) TestNackExpired_ReschedulesWork() {
 
 	due, err := s.repo.ClaimExpired(s.ctx, retryAt.Add(time.Second), time.Minute, 10)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"nack-prod:nack-user"}, due)
+	require.Equal(s.T(), []string{"nack-prod:nack-user"}, expiryClaimKeys(due))
 }
 
 // TestClaimExpired_RespectsBatchLimit verifies that one pass takes a bounded
@@ -925,4 +926,95 @@ func (s *CacheTestSuite) TestClaimExpired_RespectsBatchLimit() {
 
 	require.NoError(s.T(), err)
 	require.Len(s.T(), claimed, 2)
+}
+
+func (s *CacheTestSuite) TestMembershipClaim_ReleaseRequiresCurrentOwner() {
+	won, err := s.repo.ClaimMembership(s.ctx, "claim-prod", "claim-user", "owner-a", time.Minute)
+	require.NoError(s.T(), err)
+	require.True(s.T(), won)
+
+	won, err = s.repo.ClaimMembership(s.ctx, "claim-prod", "claim-user", "owner-b", time.Minute)
+	require.NoError(s.T(), err)
+	require.False(s.T(), won)
+
+	require.NoError(s.T(), s.repo.ReleaseMembershipClaim(
+		s.ctx, "claim-prod", "claim-user", "owner-b",
+	))
+
+	won, err = s.repo.ClaimMembership(s.ctx, "claim-prod", "claim-user", "owner-b", time.Minute)
+	require.NoError(s.T(), err)
+	require.False(s.T(), won, "a non-owner must not release the current owner's claim")
+
+	require.NoError(s.T(), s.repo.ReleaseMembershipClaim(
+		s.ctx, "claim-prod", "claim-user", "owner-a",
+	))
+	won, err = s.repo.ClaimMembership(s.ctx, "claim-prod", "claim-user", "owner-b", time.Minute)
+	require.NoError(s.T(), err)
+	require.True(s.T(), won)
+}
+
+func (s *CacheTestSuite) TestExpirationClaim_StaleWorkerCannotAckOrNackNewLease() {
+	base := time.Now().UTC().Truncate(time.Second)
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(
+		s.ctx, "fence-prod", "fence-user", base.Add(-time.Minute),
+	))
+
+	first, err := s.repo.ClaimExpired(s.ctx, base, time.Second, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), first, 1)
+
+	reclaimedAt := base.Add(2 * time.Second)
+	rescued, err := s.repo.ReclaimStaleExpired(s.ctx, reclaimedAt)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, rescued)
+
+	second, err := s.repo.ClaimExpired(s.ctx, reclaimedAt, time.Minute, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), second, 1)
+
+	require.NoError(s.T(), s.repo.AckExpired(s.ctx, first))
+	require.NoError(s.T(), s.repo.NackExpired(s.ctx, first, reclaimedAt.Add(time.Minute)))
+
+	score, err := s.client.ZScore(s.ctx, "expiring:processing", second[0].Key).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(second[0].LeaseUntil.UnixMilli()), score,
+		"a stale worker must not alter a lease owned by a newer worker")
+
+	require.NoError(s.T(), s.repo.AckExpired(s.ctx, second))
+}
+
+func (s *CacheTestSuite) TestReclaimStaleExpired_PreservesNewerScheduledTimer() {
+	base := time.Now().UTC().Truncate(time.Second)
+	oldDeadline := base.Add(-time.Minute)
+	newDeadline := base.Add(time.Hour)
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(
+		s.ctx, "newer-prod", "newer-user", oldDeadline,
+	))
+
+	oldClaim, err := s.repo.ClaimExpired(s.ctx, base, time.Second, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), oldClaim, 1)
+
+	// A new lifecycle schedules its own timer while the old one is processing.
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(
+		s.ctx, "newer-prod", "newer-user", newDeadline,
+	))
+
+	rescued, err := s.repo.ReclaimStaleExpired(s.ctx, base.Add(2*time.Second))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, rescued)
+
+	score, err := s.client.ZScore(s.ctx, "expiring:rights", "newer-prod:newer-user").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(newDeadline.Unix()), score,
+		"reclaiming an old lifecycle must not overwrite its newer timer")
+}
+
+func expiryClaimKeys(claims []models.ExpiryClaim) []string {
+	keys := make([]string, 0, len(claims))
+	for _, claim := range claims {
+		keys = append(keys, claim.Key)
+	}
+
+	return keys
 }

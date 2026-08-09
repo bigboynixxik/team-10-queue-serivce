@@ -50,7 +50,7 @@ func NewQueueService(
 // membershipClaimTTL bounds how long one transition may hold the claim. It only
 // has to outlive a normal call; a crashed process releases the user by expiry
 // rather than locking them out.
-const membershipClaimTTL = 5 * time.Second
+const membershipClaimTTL = 30 * time.Second
 
 // joinAwaitAttempts and joinAwaitDelay define how long a losing request waits for
 // the winner to finish.
@@ -106,7 +106,8 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 	// membership, but between those two moments nothing stops a second request
 	// from doing exactly the same. Without a claim, N parallel requests from one
 	// user each allocate their own units and walk away with N rights.
-	won, errClaim := s.cache.ClaimMembership(ctx, productID, userID, membershipClaimTTL)
+	claimOwner := uuid.NewString()
+	won, errClaim := s.cache.ClaimMembership(ctx, productID, userID, claimOwner, membershipClaimTTL)
 	if errClaim != nil {
 		return nil, nil, fmt.Errorf("service.JoinQueue claim: %w", errClaim)
 	}
@@ -114,7 +115,9 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 		return s.awaitConcurrentJoin(ctx, productID, userID)
 	}
 	defer func() {
-		if errRelease := s.cache.ReleaseMembershipClaim(context.WithoutCancel(ctx), productID, userID); errRelease != nil {
+		if errRelease := s.cache.ReleaseMembershipClaim(
+			context.WithoutCancel(ctx), productID, userID, claimOwner,
+		); errRelease != nil {
 			log.WarnContext(ctx, "failed to release join claim", slog.Any("error", errRelease))
 		}
 	}()
@@ -283,7 +286,8 @@ func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string
 	// Same race as JoinQueue had: the status check and the write are separate
 	// steps, so N parallel accepts each pass the check and each issue a right —
 	// ten of them turned an offer of two units into ten active rights.
-	won, errClaim := s.cache.ClaimMembership(ctx, productID, userID, membershipClaimTTL)
+	claimOwner := uuid.NewString()
+	won, errClaim := s.cache.ClaimMembership(ctx, productID, userID, claimOwner, membershipClaimTTL)
 	if errClaim != nil {
 		return nil, fmt.Errorf("service.AcceptOffer claim: %w", errClaim)
 	}
@@ -292,7 +296,7 @@ func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string
 	}
 	defer func() {
 		if errRelease := s.cache.ReleaseMembershipClaim(
-			context.WithoutCancel(ctx), productID, userID,
+			context.WithoutCancel(ctx), productID, userID, claimOwner,
 		); errRelease != nil {
 			log.WarnContext(ctx, "failed to release membership claim", slog.Any("error", errRelease))
 		}
@@ -371,6 +375,24 @@ func (s *QueueService) LeaveQueue(ctx context.Context, productID, userID string)
 
 func (s *QueueService) leaveQueue(ctx context.Context, productID, userID string, offerOnly bool) error {
 	log := logger.FromContext(ctx)
+	claimOwner := uuid.NewString()
+
+	won, errClaim := s.cache.ClaimMembership(
+		ctx, productID, userID, claimOwner, membershipClaimTTL,
+	)
+	if errClaim != nil {
+		return fmt.Errorf("service.leaveQueue claim: %w", errClaim)
+	}
+	if !won {
+		return models.ErrConcurrentJoin
+	}
+	defer func() {
+		if errRelease := s.cache.ReleaseMembershipClaim(
+			context.WithoutCancel(ctx), productID, userID, claimOwner,
+		); errRelease != nil {
+			log.WarnContext(ctx, "failed to release leave claim", slog.Any("error", errRelease))
+		}
+	}()
 
 	mem, err := s.cache.GetMembership(ctx, productID, userID)
 	if err != nil {
@@ -554,7 +576,35 @@ func (s *QueueService) AdvanceQueue(ctx context.Context, productID string) error
 			continue
 		}
 
-		s.applyAdvanceStep(ctx, productID, uid, alloc, avail, status, score)
+		claimOwner := uuid.NewString()
+		won, errClaim := s.cache.ClaimMembership(
+			ctx, productID, uid, claimOwner, membershipClaimTTL,
+		)
+		if errClaim != nil {
+			errRollback := s.rollbackAdvance(ctx, productID, uid, alloc+avail, score)
+
+			return fmt.Errorf("service.AdvanceQueue claim membership: %w",
+				errors.Join(errClaim, errRollback))
+		}
+		if !won {
+			errRollback := s.rollbackAdvance(ctx, productID, uid, alloc+avail, score)
+
+			return fmt.Errorf("service.AdvanceQueue claim membership: %w",
+				errors.Join(models.ErrConcurrentJoin, errRollback))
+		}
+
+		func() {
+			defer func() {
+				if errRelease := s.cache.ReleaseMembershipClaim(
+					context.WithoutCancel(ctx), productID, uid, claimOwner,
+				); errRelease != nil {
+					logger.FromContext(ctx).WarnContext(ctx,
+						"failed to release advance claim", slog.Any("error", errRelease))
+				}
+			}()
+
+			s.applyAdvanceStep(ctx, productID, uid, alloc, avail, status, score)
+		}()
 	}
 
 	return nil
@@ -567,7 +617,7 @@ func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid stri
 
 	mem, err := s.cache.GetMembership(ctx, productID, uid)
 	if err != nil {
-		s.rollbackAdvance(ctx, productID, uid, alloc+avail, score)
+		_ = s.rollbackAdvance(ctx, productID, uid, alloc+avail, score)
 		log.ErrorContext(ctx, "failed to get membership for advanced user", slog.Any("error", err), slog.String("user_id", uid))
 		return
 	}
@@ -588,7 +638,7 @@ func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid stri
 		}
 
 		if errSave := s.durable.SaveRight(ctx, right); errSave != nil {
-			s.rollbackAdvance(ctx, productID, uid, alloc, score)
+			_ = s.rollbackAdvance(ctx, productID, uid, alloc, score)
 			log.ErrorContext(ctx, "failed to save right in advance queue", slog.Any("error", errSave))
 			return
 		}
@@ -611,7 +661,7 @@ func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid stri
 		mem.ExpiresAt = exp
 
 		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
-			s.rollbackAdvance(ctx, productID, uid, avail, score)
+			_ = s.rollbackAdvance(ctx, productID, uid, avail, score)
 			log.ErrorContext(ctx, "failed to upsert partial membership", slog.Any("error", errUpsert))
 			return
 		}
@@ -620,7 +670,7 @@ func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid stri
 	case models.MembershipStatusSoldOut:
 		mem.Status = models.MembershipStatusSoldOut
 		if errUpsert := s.durable.UpsertMembership(ctx, mem); errUpsert != nil {
-			s.rollbackAdvance(ctx, productID, uid, 0, score)
+			_ = s.rollbackAdvance(ctx, productID, uid, 0, score)
 			log.ErrorContext(ctx, "failed to upsert sold_out membership", slog.Any("error", errUpsert))
 			return
 		}
@@ -629,18 +679,25 @@ func (s *QueueService) applyAdvanceStep(ctx context.Context, productID, uid stri
 }
 
 // rollbackAdvance handles disaster recovery if the durable database fails during queue advancement.
-func (s *QueueService) rollbackAdvance(ctx context.Context, productID, userID string, qty int, score float64) {
+func (s *QueueService) rollbackAdvance(
+	ctx context.Context, productID, userID string, qty int, score float64,
+) error {
 	log := logger.FromContext(ctx)
+	var rollbackErrors []error
 
 	if qty > 0 {
 		if err := s.cache.RestoreAvailableUnits(context.Background(), productID, qty); err != nil {
 			log.ErrorContext(ctx, "CRITICAL: failed to restore units on advance rollback", slog.Any("error", err))
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("restore units: %w", err))
 		}
 	}
 
 	if err := s.cache.Requeue(context.Background(), productID, userID, score); err != nil {
 		log.ErrorContext(ctx, "CRITICAL: failed to requeue user on advance rollback", slog.Any("error", err))
+		rollbackErrors = append(rollbackErrors, fmt.Errorf("requeue user: %w", err))
 	}
+
+	return errors.Join(rollbackErrors...)
 }
 
 // ValidateRight validates a purchase right before allowing the user to proceed to checkout.

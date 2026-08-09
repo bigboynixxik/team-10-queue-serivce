@@ -186,17 +186,17 @@ func (m *MockCacheRepo) EXPECT() *MockCacheRepoMockRecorder {
 }
 
 // AckExpired mocks base method.
-func (m *MockCacheRepo) AckExpired(ctx context.Context, keys []string) error {
+func (m *MockCacheRepo) AckExpired(ctx context.Context, claims []models.ExpiryClaim) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AckExpired", ctx, keys)
+	ret := m.ctrl.Call(m, "AckExpired", ctx, claims)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AckExpired indicates an expected call of AckExpired.
-func (mr *MockCacheRepoMockRecorder) AckExpired(ctx, keys any) *gomock.Call {
+func (mr *MockCacheRepoMockRecorder) AckExpired(ctx, claims any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckExpired", reflect.TypeOf((*MockCacheRepo)(nil).AckExpired), ctx, keys)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckExpired", reflect.TypeOf((*MockCacheRepo)(nil).AckExpired), ctx, claims)
 }
 
 // AddToExpiryTimer mocks base method.
@@ -214,10 +214,10 @@ func (mr *MockCacheRepoMockRecorder) AddToExpiryTimer(ctx, productID, userID, ex
 }
 
 // ClaimExpired mocks base method.
-func (m *MockCacheRepo) ClaimExpired(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]string, error) {
+func (m *MockCacheRepo) ClaimExpired(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]models.ExpiryClaim, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ClaimExpired", ctx, now, lease, limit)
-	ret0, _ := ret[0].([]string)
+	ret0, _ := ret[0].([]models.ExpiryClaim)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -229,18 +229,18 @@ func (mr *MockCacheRepoMockRecorder) ClaimExpired(ctx, now, lease, limit any) *g
 }
 
 // ClaimMembership mocks base method.
-func (m *MockCacheRepo) ClaimMembership(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error) {
+func (m *MockCacheRepo) ClaimMembership(ctx context.Context, productID, userID, ownerID string, ttl time.Duration) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ClaimMembership", ctx, productID, userID, ttl)
+	ret := m.ctrl.Call(m, "ClaimMembership", ctx, productID, userID, ownerID, ttl)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ClaimMembership indicates an expected call of ClaimMembership.
-func (mr *MockCacheRepoMockRecorder) ClaimMembership(ctx, productID, userID, ttl any) *gomock.Call {
+func (mr *MockCacheRepoMockRecorder) ClaimMembership(ctx, productID, userID, ownerID, ttl any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimMembership", reflect.TypeOf((*MockCacheRepo)(nil).ClaimMembership), ctx, productID, userID, ttl)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimMembership", reflect.TypeOf((*MockCacheRepo)(nil).ClaimMembership), ctx, productID, userID, ownerID, ttl)
 }
 
 // CommitPurchase mocks base method.
@@ -363,17 +363,17 @@ func (mr *MockCacheRepoMockRecorder) InitStock(ctx, productID, totalStock any) *
 }
 
 // NackExpired mocks base method.
-func (m *MockCacheRepo) NackExpired(ctx context.Context, keys []string, retryAt time.Time) error {
+func (m *MockCacheRepo) NackExpired(ctx context.Context, claims []models.ExpiryClaim, retryAt time.Time) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "NackExpired", ctx, keys, retryAt)
+	ret := m.ctrl.Call(m, "NackExpired", ctx, claims, retryAt)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // NackExpired indicates an expected call of NackExpired.
-func (mr *MockCacheRepoMockRecorder) NackExpired(ctx, keys, retryAt any) *gomock.Call {
+func (mr *MockCacheRepoMockRecorder) NackExpired(ctx, claims, retryAt any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NackExpired", reflect.TypeOf((*MockCacheRepo)(nil).NackExpired), ctx, keys, retryAt)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NackExpired", reflect.TypeOf((*MockCacheRepo)(nil).NackExpired), ctx, claims, retryAt)
 }
 
 // PopAndAllocate mocks base method.
@@ -441,17 +441,17 @@ func (mr *MockCacheRepoMockRecorder) RefreshExpiryTimer(ctx, productID, userID, 
 }
 
 // ReleaseMembershipClaim mocks base method.
-func (m *MockCacheRepo) ReleaseMembershipClaim(ctx context.Context, productID, userID string) error {
+func (m *MockCacheRepo) ReleaseMembershipClaim(ctx context.Context, productID, userID, ownerID string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReleaseMembershipClaim", ctx, productID, userID)
+	ret := m.ctrl.Call(m, "ReleaseMembershipClaim", ctx, productID, userID, ownerID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ReleaseMembershipClaim indicates an expected call of ReleaseMembershipClaim.
-func (mr *MockCacheRepoMockRecorder) ReleaseMembershipClaim(ctx, productID, userID any) *gomock.Call {
+func (mr *MockCacheRepoMockRecorder) ReleaseMembershipClaim(ctx, productID, userID, ownerID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseMembershipClaim", reflect.TypeOf((*MockCacheRepo)(nil).ReleaseMembershipClaim), ctx, productID, userID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseMembershipClaim", reflect.TypeOf((*MockCacheRepo)(nil).ReleaseMembershipClaim), ctx, productID, userID, ownerID)
 }
 
 // RemoveFromExpiryTimer mocks base method.

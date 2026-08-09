@@ -27,6 +27,11 @@ func (s *QueueServiceTestSuite) mockAdvanceQueueSequence(results ...popResult) {
 	for _, r := range results {
 		calls = append(calls, s.mockCache.EXPECT().PopAndAllocate(s.ctx, "prod-1").
 			Return(r.UID, r.Alloc, r.Avail, r.SoldOut, r.Status, r.Score, r.Err))
+		if r.Status == models.MembershipStatusRightActive ||
+			r.Status == models.MembershipStatusOfferPending ||
+			r.Status == models.MembershipStatusSoldOut {
+			s.expectMembershipClaim("prod-1", r.UID)
+		}
 	}
 
 	calls = append(calls, s.mockCache.EXPECT().PopAndAllocate(s.ctx, "prod-1").
@@ -65,6 +70,38 @@ func (s *QueueServiceTestSuite) TestAdvanceQueue_QueuedBreaks() {
 	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
 
 	require.NoError(s.T(), err)
+}
+
+func (s *QueueServiceTestSuite) TestAdvanceQueue_ClaimLostRollsBackAllocation() {
+	s.mockCache.EXPECT().PopAndAllocate(s.ctx, "prod-1").Return(
+		"user-1", 2, 0, false, models.MembershipStatusRightActive, 7.0, nil,
+	)
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+	).Return(false, nil)
+	s.mockCache.EXPECT().RestoreAvailableUnits(gomock.Any(), "prod-1", 2).Return(nil)
+	s.mockCache.EXPECT().Requeue(gomock.Any(), "prod-1", "user-1", 7.0).Return(nil)
+
+	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
+
+	require.ErrorIs(s.T(), err, models.ErrConcurrentJoin)
+}
+
+func (s *QueueServiceTestSuite) TestAdvanceQueue_ClaimLostReportsRollbackFailure() {
+	rollbackErr := errors.New("redis stock rollback failed")
+	s.mockCache.EXPECT().PopAndAllocate(s.ctx, "prod-1").Return(
+		"user-1", 2, 0, false, models.MembershipStatusRightActive, 7.0, nil,
+	)
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+	).Return(false, nil)
+	s.mockCache.EXPECT().RestoreAvailableUnits(gomock.Any(), "prod-1", 2).Return(rollbackErr)
+	s.mockCache.EXPECT().Requeue(gomock.Any(), "prod-1", "user-1", 7.0).Return(nil)
+
+	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
+
+	require.ErrorIs(s.T(), err, models.ErrConcurrentJoin)
+	require.ErrorIs(s.T(), err, rollbackErr)
 }
 
 // TestAdvanceQueue_GhostUser verifies that unprocessable or stale statuses
