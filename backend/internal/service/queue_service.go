@@ -47,10 +47,10 @@ func NewQueueService(
 	}
 }
 
-// joinClaimTTL bounds how long one entry attempt may hold the claim. It only has
-// to outlive a normal JoinQueue call; a crashed process releases the user by
-// expiry rather than locking them out.
-const joinClaimTTL = 5 * time.Second
+// membershipClaimTTL bounds how long one transition may hold the claim. It only
+// has to outlive a normal call; a crashed process releases the user by expiry
+// rather than locking them out.
+const membershipClaimTTL = 5 * time.Second
 
 // joinAwaitAttempts and joinAwaitDelay define how long a losing request waits for
 // the winner to finish.
@@ -106,7 +106,7 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 	// membership, but between those two moments nothing stops a second request
 	// from doing exactly the same. Without a claim, N parallel requests from one
 	// user each allocate their own units and walk away with N rights.
-	won, errClaim := s.cache.ClaimJoin(ctx, productID, userID, joinClaimTTL)
+	won, errClaim := s.cache.ClaimMembership(ctx, productID, userID, membershipClaimTTL)
 	if errClaim != nil {
 		return nil, nil, fmt.Errorf("service.JoinQueue claim: %w", errClaim)
 	}
@@ -114,7 +114,7 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 		return s.awaitConcurrentJoin(ctx, productID, userID)
 	}
 	defer func() {
-		if errRelease := s.cache.ReleaseJoinClaim(context.WithoutCancel(ctx), productID, userID); errRelease != nil {
+		if errRelease := s.cache.ReleaseMembershipClaim(context.WithoutCancel(ctx), productID, userID); errRelease != nil {
 			log.WarnContext(ctx, "failed to release join claim", slog.Any("error", errRelease))
 		}
 	}()
@@ -279,6 +279,24 @@ func (s *QueueService) AcceptOffer(ctx context.Context, productID, userID string
 	if acceptedQuantity <= 0 {
 		return nil, models.ErrQuantityInvalid
 	}
+
+	// Same race as JoinQueue had: the status check and the write are separate
+	// steps, so N parallel accepts each pass the check and each issue a right —
+	// ten of them turned an offer of two units into ten active rights.
+	won, errClaim := s.cache.ClaimMembership(ctx, productID, userID, membershipClaimTTL)
+	if errClaim != nil {
+		return nil, fmt.Errorf("service.AcceptOffer claim: %w", errClaim)
+	}
+	if !won {
+		return s.awaitConcurrentAccept(ctx, productID, userID)
+	}
+	defer func() {
+		if errRelease := s.cache.ReleaseMembershipClaim(
+			context.WithoutCancel(ctx), productID, userID,
+		); errRelease != nil {
+			log.WarnContext(ctx, "failed to release membership claim", slog.Any("error", errRelease))
+		}
+	}()
 
 	mem, err := s.cache.GetMembership(ctx, productID, userID)
 	if err != nil {
@@ -738,4 +756,43 @@ func parseExpiredKey(key string) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// awaitConcurrentAccept serves the accept request that lost the claim.
+//
+// A double click on «take N» should not punish the user: if the winner already
+// turned the offer into a right, that right is returned as is. Only when the
+// offer is gone without a right behind it does this report a conflict.
+func (s *QueueService) awaitConcurrentAccept(
+	ctx context.Context, productID, userID string,
+) (*models.Right, error) {
+	for attempt := 0; attempt < joinAwaitAttempts; attempt++ {
+		mem, err := s.cache.GetMembership(ctx, productID, userID)
+		if err != nil {
+			return nil, fmt.Errorf("service.AcceptOffer await: %w", err)
+		}
+
+		if mem.Status == models.MembershipStatusRightActive && mem.CurrentToken != nil {
+			right, errRight := s.cache.GetRight(ctx, *mem.CurrentToken)
+			if errRight != nil {
+				return nil, fmt.Errorf("service.AcceptOffer await right: %w", errRight)
+			}
+
+			return right, nil
+		}
+
+		// The offer is no longer pending and no right came out of it: the winner
+		// declined it, or it expired. There is nothing left to accept.
+		if mem.Status != models.MembershipStatusOfferPending {
+			return nil, models.ErrInvalidStatus
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(joinAwaitDelay):
+		}
+	}
+
+	return nil, models.ErrConcurrentJoin
 }

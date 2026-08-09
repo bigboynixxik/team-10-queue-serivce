@@ -73,12 +73,13 @@ type CacheRepo interface {
 	// GetRight retrieves a cached right by its token.
 	GetRight(ctx context.Context, token string) (*models.Right, error)
 
-	// ClaimJoin marks the start of an entry attempt and reports whether the caller
-	// won it. Losing means a concurrent request for the same user is in flight.
-	ClaimJoin(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error)
+	// ClaimMembership marks the start of a membership transition and reports
+	// whether the caller won it. Losing means a concurrent request for the same
+	// user is in flight.
+	ClaimMembership(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error)
 
-	// ReleaseJoinClaim frees the claim once the entry is decided.
-	ReleaseJoinClaim(ctx context.Context, productID, userID string) error
+	// ReleaseMembershipClaim frees the claim once the transition is decided.
+	ReleaseMembershipClaim(ctx context.Context, productID, userID string) error
 
 	// GetStock reads the cached stock counters of a product.
 	GetStock(ctx context.Context, productID string) (productCount, available int, err error)

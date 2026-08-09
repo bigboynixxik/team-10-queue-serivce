@@ -228,19 +228,19 @@ func (mr *MockCacheRepoMockRecorder) ClaimExpired(ctx, now, lease, limit any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimExpired", reflect.TypeOf((*MockCacheRepo)(nil).ClaimExpired), ctx, now, lease, limit)
 }
 
-// ClaimJoin mocks base method.
-func (m *MockCacheRepo) ClaimJoin(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error) {
+// ClaimMembership mocks base method.
+func (m *MockCacheRepo) ClaimMembership(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ClaimJoin", ctx, productID, userID, ttl)
+	ret := m.ctrl.Call(m, "ClaimMembership", ctx, productID, userID, ttl)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ClaimJoin indicates an expected call of ClaimJoin.
-func (mr *MockCacheRepoMockRecorder) ClaimJoin(ctx, productID, userID, ttl any) *gomock.Call {
+// ClaimMembership indicates an expected call of ClaimMembership.
+func (mr *MockCacheRepoMockRecorder) ClaimMembership(ctx, productID, userID, ttl any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimJoin", reflect.TypeOf((*MockCacheRepo)(nil).ClaimJoin), ctx, productID, userID, ttl)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimMembership", reflect.TypeOf((*MockCacheRepo)(nil).ClaimMembership), ctx, productID, userID, ttl)
 }
 
 // CommitPurchase mocks base method.
@@ -440,18 +440,18 @@ func (mr *MockCacheRepoMockRecorder) RefreshExpiryTimer(ctx, productID, userID, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshExpiryTimer", reflect.TypeOf((*MockCacheRepo)(nil).RefreshExpiryTimer), ctx, productID, userID, expiresAt)
 }
 
-// ReleaseJoinClaim mocks base method.
-func (m *MockCacheRepo) ReleaseJoinClaim(ctx context.Context, productID, userID string) error {
+// ReleaseMembershipClaim mocks base method.
+func (m *MockCacheRepo) ReleaseMembershipClaim(ctx context.Context, productID, userID string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReleaseJoinClaim", ctx, productID, userID)
+	ret := m.ctrl.Call(m, "ReleaseMembershipClaim", ctx, productID, userID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// ReleaseJoinClaim indicates an expected call of ReleaseJoinClaim.
-func (mr *MockCacheRepoMockRecorder) ReleaseJoinClaim(ctx, productID, userID any) *gomock.Call {
+// ReleaseMembershipClaim indicates an expected call of ReleaseMembershipClaim.
+func (mr *MockCacheRepoMockRecorder) ReleaseMembershipClaim(ctx, productID, userID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseJoinClaim", reflect.TypeOf((*MockCacheRepo)(nil).ReleaseJoinClaim), ctx, productID, userID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseMembershipClaim", reflect.TypeOf((*MockCacheRepo)(nil).ReleaseMembershipClaim), ctx, productID, userID)
 }
 
 // RemoveFromExpiryTimer mocks base method.
