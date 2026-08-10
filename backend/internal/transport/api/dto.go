@@ -22,6 +22,11 @@ type rightEventRequest struct {
 	OrderID string `json:"order_id"`
 }
 
+// checkoutValidationRequest is AvitoBackend's server-side guard before it creates an order.
+type checkoutValidationRequest struct {
+	ProductID string `json:"product_id"`
+}
+
 // eventPaymentSucceeded is the only event AvitoBackend reports so far.
 const eventPaymentSucceeded = "payment_succeeded"
 

@@ -92,6 +92,27 @@ var (
 		return 1
 	`)
 
+	restoreProductStateScript = redis.NewScript(`
+		redis.call('DEL', KEYS[1])
+		redis.call('HSET', KEYS[1], 'product_count', ARGV[1], 'available_units', ARGV[2])
+
+		redis.call('DEL', KEYS[2])
+		for i = 3, #ARGV do
+			redis.call('ZADD', KEYS[2], i - 2, ARGV[i])
+		end
+
+		redis.call('SET', KEYS[3], #ARGV - 2)
+		return 1
+	`)
+
+	releaseMembershipClaimScript = redis.NewScript(`
+		if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+			return 0
+		end
+
+		return redis.call('DEL', KEYS[1])
+	`)
+
 	// claimExpiredScript moves due timers from the scheduled set into the
 	// processing set under a lease, in one atomic step.
 	//
@@ -102,36 +123,72 @@ var (
 	claimExpiredScript = redis.NewScript(`
 		local scheduled = KEYS[1]
 		local processing = KEYS[2]
+		local deadlines = KEYS[3]
 		local now = ARGV[1]
 		local leaseUntil = ARGV[2]
 		local limit = tonumber(ARGV[3])
 
-		local due = redis.call('ZRANGE', scheduled, '-inf', now, 'BYSCORE', 'LIMIT', 0, limit)
+		local due = redis.call('ZRANGE', scheduled, '-inf', now, 'BYSCORE', 'LIMIT', 0, limit, 'WITHSCORES')
 		if #due == 0 then
 			return {}
 		end
 
-		for _, member in ipairs(due) do
+		for i = 1, #due, 2 do
+			local member = due[i]
+			local deadline = due[i + 1]
 			redis.call('ZREM', scheduled, member)
 			redis.call('ZADD', processing, leaseUntil, member)
+			redis.call('HSET', deadlines, member, deadline)
 		end
 
 		return due
 	`)
 
+	ackExpiredScript = redis.NewScript(`
+		local processing = KEYS[1]
+		local deadlines = KEYS[2]
+		local removed = 0
+
+		for i = 1, #ARGV, 2 do
+			local member = ARGV[i]
+			local expectedLease = tonumber(ARGV[i + 1])
+			local currentLease = redis.call('ZSCORE', processing, member)
+
+			if currentLease and tonumber(currentLease) == expectedLease then
+				redis.call('ZREM', processing, member)
+				redis.call('HDEL', deadlines, member)
+				removed = removed + 1
+			end
+		end
+
+		return removed
+	`)
+
 	// nackExpiredScript returns a claimed item to the schedule after a failure,
-	// so the next pass picks it up instead of dropping it.
+	// but only if the caller still owns the lease.
 	nackExpiredScript = redis.NewScript(`
 		local processing = KEYS[1]
 		local scheduled = KEYS[2]
+		local deadlines = KEYS[3]
 		local retryAt = ARGV[1]
+		local returned = 0
 
-		for i = 2, #ARGV do
-			redis.call('ZREM', processing, ARGV[i])
-			redis.call('ZADD', scheduled, retryAt, ARGV[i])
+		for i = 2, #ARGV, 2 do
+			local member = ARGV[i]
+			local expectedLease = tonumber(ARGV[i + 1])
+			local currentLease = redis.call('ZSCORE', processing, member)
+
+			if currentLease and tonumber(currentLease) == expectedLease then
+				redis.call('ZREM', processing, member)
+				redis.call('HDEL', deadlines, member)
+				if not redis.call('ZSCORE', scheduled, member) then
+					redis.call('ZADD', scheduled, retryAt, member)
+				end
+				returned = returned + 1
+			end
 		end
 
-		return #ARGV - 1
+		return returned
 	`)
 
 	// reclaimStaleExpiredScript rescues items whose lease ran out — the worker
@@ -139,16 +196,22 @@ var (
 	reclaimStaleExpiredScript = redis.NewScript(`
 		local processing = KEYS[1]
 		local scheduled = KEYS[2]
-		local now = ARGV[1]
+		local deadlines = KEYS[3]
+		local leaseNow = ARGV[1]
+		local scheduleNow = ARGV[2]
 
-		local stale = redis.call('ZRANGE', processing, '-inf', now, 'BYSCORE')
+		local stale = redis.call('ZRANGE', processing, '-inf', leaseNow, 'BYSCORE')
 		if #stale == 0 then
 			return 0
 		end
 
 		for _, member in ipairs(stale) do
+			local originalDeadline = redis.call('HGET', deadlines, member) or scheduleNow
 			redis.call('ZREM', processing, member)
-			redis.call('ZADD', scheduled, now, member)
+			redis.call('HDEL', deadlines, member)
+			if not redis.call('ZSCORE', scheduled, member) then
+				redis.call('ZADD', scheduled, originalDeadline, member)
+			end
 		end
 
 		return #stale
@@ -169,6 +232,29 @@ var (
 		if deadline > tonumber(current) then
 			redis.call('ZADD', KEYS[1], deadline, ARGV[1])
 		end
+		return 1
+	`)
+
+	markPurchasedIfCurrentTokenScript = redis.NewScript(`
+		local currentToken = redis.call('HGET', KEYS[1], 'current_token')
+		if currentToken ~= ARGV[1] then
+			return 0
+		end
+
+		local status = redis.call('HGET', KEYS[1], 'status')
+		if status ~= 'RIGHT_ACTIVE' then
+			return 0
+		end
+
+		redis.call('HSET', KEYS[1],
+			'status', 'PURCHASED',
+			'available_quantity', '',
+			'current_token', '',
+			'expires_at', '',
+			'updated_at', ARGV[2]
+		)
+		redis.call('ZREM', KEYS[2], ARGV[3])
+		redis.call('PUBLISH', KEYS[3], cjson.encode({status = 'PURCHASED'}))
 		return 1
 	`)
 
@@ -381,6 +467,36 @@ func (c *CacheRepo) GetMembership(ctx context.Context, productID string, userID 
 	}
 
 	return membership, nil
+}
+
+// MarkPurchasedIfCurrentToken finalizes a cached membership only while the
+// membership still points at the paid token. The membership update and timer
+// removal are atomic, so an old webhook cannot delete a newer right timer.
+func (c *CacheRepo) MarkPurchasedIfCurrentToken(
+	ctx context.Context,
+	right *models.Right,
+	updatedAt time.Time,
+) (bool, error) {
+	membershipKey := fmt.Sprintf("member:%s:%s", right.ProductID, right.UserID)
+	timerMember := fmt.Sprintf("%s:%s", right.ProductID, right.UserID)
+
+	applied, err := markPurchasedIfCurrentTokenScript.Run(
+		ctx,
+		c.client,
+		[]string{
+			membershipKey,
+			"expiring:rights",
+			userUpdatesChannel(right.ProductID, right.UserID),
+		},
+		right.Token,
+		updatedAt.Format(time.RFC3339Nano),
+		timerMember,
+	).Int()
+	if err != nil {
+		return false, fmt.Errorf("redis.CacheRepo.MarkPurchasedIfCurrentToken: %w", err)
+	}
+
+	return applied == 1, nil
 }
 
 // SetRight caches an issued right for fast validation before checkout.
@@ -660,6 +776,51 @@ func (c *CacheRepo) Requeue(ctx context.Context, productID string, userID string
 	return nil
 }
 
+// RestoreProductState replaces stock counters and FIFO queue for one product
+// during startup recovery. Queue scores are rebuilt as 1..N and the sequence is
+// set to N so the next Enqueue call appends after the recovered users.
+func (c *CacheRepo) RestoreProductState(
+	ctx context.Context,
+	productID string,
+	productCount int,
+	available int,
+	queuedUserIDs []string,
+) error {
+	args := make([]any, 0, len(queuedUserIDs)+2)
+	args = append(args, productCount, available)
+	for _, userID := range queuedUserIDs {
+		args = append(args, userID)
+	}
+
+	err := restoreProductStateScript.Run(
+		ctx,
+		c.client,
+		[]string{
+			fmt.Sprintf("stock:%s", productID),
+			queueKey(productID),
+			fmt.Sprintf("queue:%s:seq", productID),
+		},
+		args...,
+	).Err()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("redis.CacheRepo.RestoreProductState: %w", err)
+	}
+
+	return nil
+}
+
+// ResetExpiryTimers clears only the expiration worker indexes. It intentionally
+// leaves unrelated Redis data intact; recovery recreates the timers from
+// PostgreSQL immediately afterwards.
+func (c *CacheRepo) ResetExpiryTimers(ctx context.Context) error {
+	err := c.client.Del(ctx, expiryScheduledKey, expiryProcessingKey, expiryDeadlineKey).Err()
+	if err != nil {
+		return fmt.Errorf("redis.CacheRepo.ResetExpiryTimers: %w", err)
+	}
+
+	return nil
+}
+
 // GetQueueMetrics retrieves the user's 0-indexed rank in the queue and the currently available stock.
 // It uses a pipeline to fetch both values in a single network round-trip.
 func (c *CacheRepo) GetQueueMetrics(ctx context.Context, productID string, userID string) (int, int, error) {
@@ -735,8 +896,10 @@ func membershipClaimKey(productID, userID string) string {
 //
 // The claim carries a short TTL so a process that dies mid-entry cannot lock the
 // user out: the key expires on its own and the next attempt proceeds.
-func (c *CacheRepo) ClaimMembership(ctx context.Context, productID, userID string, ttl time.Duration) (bool, error) {
-	won, err := c.client.SetNX(ctx, membershipClaimKey(productID, userID), "1", ttl).Result()
+func (c *CacheRepo) ClaimMembership(
+	ctx context.Context, productID, userID, ownerID string, ttl time.Duration,
+) (bool, error) {
+	won, err := c.client.SetNX(ctx, membershipClaimKey(productID, userID), ownerID, ttl).Result()
 	if err != nil {
 		return false, fmt.Errorf("redis.CacheRepo.ClaimMembership: %w", err)
 	}
@@ -746,8 +909,11 @@ func (c *CacheRepo) ClaimMembership(ctx context.Context, productID, userID strin
 
 // ReleaseMembershipClaim frees the claim once the transition is decided, so a
 // legitimate repeat request does not have to wait out the whole TTL.
-func (c *CacheRepo) ReleaseMembershipClaim(ctx context.Context, productID, userID string) error {
-	if err := c.client.Del(ctx, membershipClaimKey(productID, userID)).Err(); err != nil {
+func (c *CacheRepo) ReleaseMembershipClaim(ctx context.Context, productID, userID, ownerID string) error {
+	err := releaseMembershipClaimScript.Run(
+		ctx, c.client, []string{membershipClaimKey(productID, userID)}, ownerID,
+	).Err()
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("redis.CacheRepo.ReleaseMembershipClaim: %w", err)
 	}
 
@@ -759,6 +925,7 @@ func (c *CacheRepo) ReleaseMembershipClaim(ctx context.Context, productID, userI
 const (
 	expiryScheduledKey  = "expiring:rights"
 	expiryProcessingKey = "expiring:processing"
+	expiryDeadlineKey   = "expiring:processing-deadlines"
 )
 
 // ClaimExpired takes up to limit due timers under a lease and returns them.
@@ -766,32 +933,52 @@ const (
 // acknowledges them, ReclaimStaleExpired puts them back once the lease expires.
 func (c *CacheRepo) ClaimExpired(
 	ctx context.Context, now time.Time, lease time.Duration, limit int,
-) ([]string, error) {
+) ([]models.ExpiryClaim, error) {
+	leaseUntil := now.Add(lease)
 	res, err := claimExpiredScript.Run(
 		ctx,
 		c.client,
-		[]string{expiryScheduledKey, expiryProcessingKey},
-		now.Unix(), now.Add(lease).Unix(), limit,
+		[]string{expiryScheduledKey, expiryProcessingKey, expiryDeadlineKey},
+		now.Unix(), leaseUntil.UnixMilli(), limit,
 	).StringSlice()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("redis.CacheRepo.ClaimExpired: %w", err)
 	}
+	if len(res)%2 != 0 {
+		return nil, fmt.Errorf("redis.CacheRepo.ClaimExpired: %w", ErrInvalidResponse)
+	}
 
-	return res, nil
+	claims := make([]models.ExpiryClaim, 0, len(res)/2)
+	for index := 0; index < len(res); index += 2 {
+		deadline, errParse := strconv.ParseFloat(res[index+1], 64)
+		if errParse != nil {
+			return nil, fmt.Errorf("redis.CacheRepo.ClaimExpired deadline: %w", errParse)
+		}
+		claims = append(claims, models.ExpiryClaim{
+			Key:        res[index],
+			Deadline:   time.Unix(int64(deadline), 0).UTC(),
+			LeaseUntil: leaseUntil,
+		})
+	}
+
+	return claims, nil
 }
 
 // AckExpired confirms that claimed timers were handled and drops them for good.
-func (c *CacheRepo) AckExpired(ctx context.Context, keys []string) error {
-	if len(keys) == 0 {
+func (c *CacheRepo) AckExpired(ctx context.Context, claims []models.ExpiryClaim) error {
+	if len(claims) == 0 {
 		return nil
 	}
 
-	members := make([]any, 0, len(keys))
-	for _, key := range keys {
-		members = append(members, key)
+	args := make([]any, 0, len(claims)*2)
+	for _, claim := range claims {
+		args = append(args, claim.Key, claim.LeaseUntil.UnixMilli())
 	}
 
-	if err := c.client.ZRem(ctx, expiryProcessingKey, members...).Err(); err != nil {
+	err := ackExpiredScript.Run(
+		ctx, c.client, []string{expiryProcessingKey, expiryDeadlineKey}, args...,
+	).Err()
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("redis.CacheRepo.AckExpired: %w", err)
 	}
 
@@ -799,19 +986,22 @@ func (c *CacheRepo) AckExpired(ctx context.Context, keys []string) error {
 }
 
 // NackExpired returns claimed timers to the schedule after a failed attempt.
-func (c *CacheRepo) NackExpired(ctx context.Context, keys []string, retryAt time.Time) error {
-	if len(keys) == 0 {
+func (c *CacheRepo) NackExpired(
+	ctx context.Context, claims []models.ExpiryClaim, retryAt time.Time,
+) error {
+	if len(claims) == 0 {
 		return nil
 	}
 
-	args := make([]any, 0, len(keys)+1)
+	args := make([]any, 0, len(claims)*2+1)
 	args = append(args, retryAt.Unix())
-	for _, key := range keys {
-		args = append(args, key)
+	for _, claim := range claims {
+		args = append(args, claim.Key, claim.LeaseUntil.UnixMilli())
 	}
 
 	err := nackExpiredScript.Run(
-		ctx, c.client, []string{expiryProcessingKey, expiryScheduledKey}, args...,
+		ctx, c.client,
+		[]string{expiryProcessingKey, expiryScheduledKey, expiryDeadlineKey}, args...,
 	).Err()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("redis.CacheRepo.NackExpired: %w", err)
@@ -824,7 +1014,9 @@ func (c *CacheRepo) NackExpired(ctx context.Context, keys []string, retryAt time
 // them is gone — and reports how many were rescued.
 func (c *CacheRepo) ReclaimStaleExpired(ctx context.Context, now time.Time) (int, error) {
 	count, err := reclaimStaleExpiredScript.Run(
-		ctx, c.client, []string{expiryProcessingKey, expiryScheduledKey}, now.Unix(),
+		ctx, c.client,
+		[]string{expiryProcessingKey, expiryScheduledKey, expiryDeadlineKey},
+		now.UnixMilli(), now.Unix(),
 	).Int()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return 0, fmt.Errorf("redis.CacheRepo.ReclaimStaleExpired: %w", err)

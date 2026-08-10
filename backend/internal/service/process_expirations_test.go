@@ -3,6 +3,7 @@ package service_test
 import (
 	"backend/internal/models"
 	"errors"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -28,6 +29,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_OfferPending() {
 		UserID:            "user-1",
 		Status:            models.MembershipStatusOfferPending,
 		AvailableQuantity: ptr(3),
+		ExpiresAt:         ptr(time.Now().UTC().Add(-time.Minute)),
 	}
 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
@@ -59,6 +61,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_RightActive() {
 		Status:       models.MembershipStatusRightActive,
 		Quantity:     2,
 		CurrentToken: &token,
+		ExpiresAt:    ptr(time.Now().UTC().Add(-time.Minute)),
 	}
 	expiredRight := &models.Right{
 		Token:     token,
@@ -93,12 +96,14 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_MultipleProducts() {
 		UserID:            "user-1",
 		Status:            models.MembershipStatusOfferPending,
 		AvailableQuantity: ptr(1),
+		ExpiresAt:         ptr(time.Now().UTC().Add(-time.Minute)),
 	}
 	mem2 := &models.QueueMembership{
 		ProductID:         "prod-2",
 		UserID:            "user-2",
 		Status:            models.MembershipStatusOfferPending,
 		AvailableQuantity: ptr(4),
+		ExpiresAt:         ptr(time.Now().UTC().Add(-time.Minute)),
 	}
 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem1, nil)
@@ -157,7 +162,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_MembershipFetchError() {
 	// The item is not acknowledged: it goes back to the schedule so the next pass
 	// retries it once the cache recovers.
 	s.mockCache.EXPECT().
-		NackExpired(gomock.Any(), []string{"prod-1:user-1"}, gomock.Any()).
+		NackExpired(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	err := s.srv.ProcessExpirations(s.ctx)
@@ -174,6 +179,7 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_PaymentWonRace() {
 		Status:       models.MembershipStatusRightActive,
 		Quantity:     2,
 		CurrentToken: &token,
+		ExpiresAt:    ptr(time.Now().UTC().Add(-time.Minute)),
 	}
 	usedRight := &models.Right{
 		Token:     token,
@@ -201,13 +207,64 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_RightTransactionErrorIsRe
 		Status:       models.MembershipStatusRightActive,
 		Quantity:     2,
 		CurrentToken: &token,
+		ExpiresAt:    ptr(time.Now().UTC().Add(-time.Minute)),
 	}
 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
 	s.mockDurable.EXPECT().ExpireRightAndUpsertMembershipTx(s.ctx, token, gomock.Any()).Return(nil, false, errors.New("postgres unavailable"))
 	s.mockCache.EXPECT().
-		NackExpired(gomock.Any(), []string{"prod-1:user-1"}, gomock.Any()).
+		NackExpired(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
+
+	err := s.srv.ProcessExpirations(s.ctx)
+
+	require.NoError(s.T(), err)
+}
+
+func (s *QueueServiceTestSuite) TestProcessExpirations_StaleClaimDoesNotExpireNewMembership() {
+	s.expectExpirationClaim([]string{"prod-1:user-1"}, nil)
+
+	now := time.Now().UTC()
+	token := "new-right-token"
+	mem := &models.QueueMembership{
+		ProductID:    "prod-1",
+		UserID:       "user-1",
+		Status:       models.MembershipStatusRightActive,
+		Quantity:     1,
+		CurrentToken: &token,
+		ExpiresAt:    ptr(now.Add(time.Minute)),
+		UpdatedAt:    now,
+	}
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
+	s.mockCache.EXPECT().RefreshExpiryTimer(
+		s.ctx, "prod-1", "user-1", gomock.Any(),
+	).Return(false, nil)
+	s.mockCache.EXPECT().AddToExpiryTimer(
+		s.ctx, "prod-1", "user-1", gomock.Any(),
+	).Return(nil)
+
+	err := s.srv.ProcessExpirations(s.ctx)
+
+	require.NoError(s.T(), err)
+}
+
+func (s *QueueServiceTestSuite) TestProcessExpirations_MembershipClaimLostIsRescheduled() {
+	now := time.Now().UTC()
+	claim := models.ExpiryClaim{
+		Key:        "prod-1:user-1",
+		Deadline:   now.Add(-time.Minute),
+		LeaseUntil: now.Add(time.Minute),
+	}
+	s.mockCache.EXPECT().ReclaimStaleExpired(gomock.Any(), gomock.Any()).Return(0, nil)
+	s.mockCache.EXPECT().ClaimExpired(
+		gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
+	).Return([]models.ExpiryClaim{claim}, nil)
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+	).Return(false, nil)
+	s.mockCache.EXPECT().NackExpired(
+		gomock.Any(), []models.ExpiryClaim{claim}, gomock.Any(),
+	).Return(nil)
 
 	err := s.srv.ProcessExpirations(s.ctx)
 

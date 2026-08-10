@@ -39,6 +39,7 @@ var checkoutTemplate = template.Must(template.New("checkout").Parse(`<!doctype h
   </div>
 <script>
   const token = {{.Token}};
+  const productID = {{.ProductID}};
   const button = document.getElementById('pay');
   const result = document.getElementById('result');
 
@@ -62,7 +63,7 @@ var checkoutTemplate = template.Must(template.New("checkout").Parse(`<!doctype h
       const response = await fetch('/checkout/pay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ token, product_id: productID }),
       });
       const body = await response.json();
       if (response.ok) {

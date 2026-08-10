@@ -81,7 +81,7 @@ func (s *RepoTestSuite) TearDownSuite() {
 
 // SetupTest truncates all tables before each test to ensure isolation.
 func (s *RepoTestSuite) SetupTest() {
-	_, err := s.pool.Exec(s.ctx, `TRUNCATE rights, queue_memberships, product_stock CASCADE;`)
+	_, err := s.pool.Exec(s.ctx, `TRUNCATE stock_decrement_outbox, rights, queue_memberships, product_stock CASCADE;`)
 	require.NoError(s.T(), err)
 }
 
@@ -148,6 +148,58 @@ func (s *RepoTestSuite) TestSaveRight_InvalidQuantity() {
 
 	err := s.repo.SaveRight(s.ctx, right)
 	require.Error(s.T(), err)
+}
+
+func (s *RepoTestSuite) TestIssueRightAndUpsertMembershipTx_Success() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	right := &models.Right{
+		Token: "atomic-token", UserID: "user-1", ProductID: "prod-1",
+		Quantity: 2, Status: models.RightStatusActive,
+		CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute),
+	}
+	membership := &models.QueueMembership{
+		ProductID: "prod-1", UserID: "user-1",
+		Status: models.MembershipStatusRightActive, Quantity: 2,
+		CurrentToken: &right.Token, ExpiresAt: &right.ExpiresAt,
+		CreatedAt: now, UpdatedAt: now,
+	}
+
+	err := s.repo.IssueRightAndUpsertMembershipTx(s.ctx, right, membership)
+	require.NoError(s.T(), err)
+
+	var token string
+	err = s.pool.QueryRow(s.ctx, `
+		SELECT current_token
+		FROM queue_memberships
+		WHERE product_id = $1 AND user_id = $2
+	`, "prod-1", "user-1").Scan(&token)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), right.Token, token)
+
+	storedRight, err := s.repo.GetRightByToken(s.ctx, right.Token)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.RightStatusActive, storedRight.Status)
+}
+
+func (s *RepoTestSuite) TestIssueRightAndUpsertMembershipTx_RollsBackRightWhenMembershipFails() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	right := &models.Right{
+		Token: "rolled-back-token", UserID: "user-1", ProductID: "prod-1",
+		Quantity: 1, Status: models.RightStatusActive,
+		CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute),
+	}
+	invalidMembership := &models.QueueMembership{
+		ProductID: "prod-1", UserID: "user-1",
+		Status: models.MembershipStatusRightActive, Quantity: 0,
+		CurrentToken: &right.Token, ExpiresAt: &right.ExpiresAt,
+		CreatedAt: now, UpdatedAt: now,
+	}
+
+	err := s.repo.IssueRightAndUpsertMembershipTx(s.ctx, right, invalidMembership)
+	require.Error(s.T(), err)
+
+	_, err = s.repo.GetRightByToken(s.ctx, right.Token)
+	require.ErrorIs(s.T(), err, models.ErrTokenNotFound)
 }
 
 // TestGetRightByToken_NotFound validates correct error mapping for missing tokens.
@@ -221,6 +273,20 @@ func (s *RepoTestSuite) TestUseRightTx() {
 	})
 	require.NoError(s.T(), err)
 
+	token := "token-pay"
+	err = s.repo.UpsertMembership(s.ctx, &models.QueueMembership{
+		ProductID:         "prod-1",
+		UserID:            "u1",
+		Status:            models.MembershipStatusRightActive,
+		Quantity:          2,
+		AvailableQuantity: ptr(2),
+		CurrentToken:      &token,
+		ExpiresAt:         ptr(now.Add(time.Minute)),
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	})
+	require.NoError(s.T(), err)
+
 	right, transitioned, err := s.repo.UseRightTx(s.ctx, "token-pay", "order-777", now)
 	require.NoError(s.T(), err)
 	require.True(s.T(), transitioned)
@@ -233,9 +299,137 @@ func (s *RepoTestSuite) TestUseRightTx() {
 	err = s.pool.QueryRow(s.ctx, `SELECT product_count FROM product_stock WHERE product_id=$1`, "prod-1").Scan(&count)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 3, count)
+
+	var status models.MembershipStatus
+	var currentTokenIsNull, expiresAtIsNull, availableQuantityIsNull bool
+	err = s.pool.QueryRow(s.ctx, `
+		SELECT status, current_token IS NULL, expires_at IS NULL, available_quantity IS NULL
+		FROM queue_memberships WHERE product_id=$1 AND user_id=$2
+	`, "prod-1", "u1").Scan(&status, &currentTokenIsNull, &expiresAtIsNull, &availableQuantityIsNull)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.MembershipStatusPurchased, status)
+	require.True(s.T(), currentTokenIsNull)
+	require.True(s.T(), expiresAtIsNull)
+	require.True(s.T(), availableQuantityIsNull)
+
+	var outboxCount int
+	err = s.pool.QueryRow(s.ctx, `
+		SELECT count(*)
+		FROM stock_decrement_outbox
+		WHERE right_token=$1 AND order_id=$2 AND product_id=$3 AND quantity=$4
+	`, "token-pay", "order-777", "prod-1", 2).Scan(&outboxCount)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, outboxCount)
+}
+
+func (s *RepoTestSuite) TestUseRightTx_UsedRightRejectsDifferentOrder() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "token-order", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	})
+	require.NoError(s.T(), err)
+
+	_, transitioned, err := s.repo.UseRightTx(s.ctx, "token-order", "order-1", now)
+	require.NoError(s.T(), err)
+	require.True(s.T(), transitioned)
+
+	_, transitioned, err = s.repo.UseRightTx(s.ctx, "token-order", "order-2", now)
+	require.ErrorIs(s.T(), err, models.ErrTokenUsed)
+	require.False(s.T(), transitioned)
+
+	var outboxCount int
+	err = s.pool.QueryRow(s.ctx, `SELECT count(*) FROM stock_decrement_outbox WHERE right_token=$1`, "token-order").Scan(&outboxCount)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, outboxCount)
+}
+
+func (s *RepoTestSuite) TestUseRightTx_DoesNotOverwriteNewMembershipToken() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "old-token", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	})
+	require.NoError(s.T(), err)
+
+	newToken := "new-token"
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: newToken, UserID: "u1", ProductID: "prod-1", Quantity: 1,
+		Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(2 * time.Minute),
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.UpsertMembership(s.ctx, &models.QueueMembership{
+		ProductID:    "prod-1",
+		UserID:       "u1",
+		Status:       models.MembershipStatusRightActive,
+		Quantity:     1,
+		CurrentToken: &newToken,
+		ExpiresAt:    ptr(now.Add(2 * time.Minute)),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+	require.NoError(s.T(), err)
+
+	_, transitioned, err := s.repo.UseRightTx(s.ctx, "old-token", "order-old", now)
+	require.NoError(s.T(), err)
+	require.True(s.T(), transitioned)
+
+	var status models.MembershipStatus
+	var currentToken string
+	var hasExpiresAt bool
+	err = s.pool.QueryRow(s.ctx, `
+		SELECT status, current_token, expires_at IS NOT NULL
+		FROM queue_memberships WHERE product_id=$1 AND user_id=$2
+	`, "prod-1", "u1").Scan(&status, &currentToken, &hasExpiresAt)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.MembershipStatusRightActive, status)
+	require.Equal(s.T(), newToken, currentToken)
+	require.True(s.T(), hasExpiresAt)
 }
 
 // TestUseRightTx_StockDepleted verifies that both Right and stock roll back together.
+// TestExpireRights verifies recovery can settle orphaned rights without
+// touching the ones that already reached a terminal state.
+func (s *RepoTestSuite) TestExpireRights() {
+	now := time.Now().UTC()
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+
+	for _, token := range []string{"orphan-1", "orphan-2", "keep-active"} {
+		err = s.repo.SaveRight(s.ctx, &models.Right{
+			Token: token, UserID: "u1", ProductID: "prod-1", Quantity: 1,
+			Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+		})
+		require.NoError(s.T(), err)
+	}
+
+	require.NoError(s.T(), s.repo.ExpireRights(s.ctx, []string{"orphan-1", "orphan-2"}))
+
+	for token, expected := range map[string]models.RightStatus{
+		"orphan-1":    models.RightStatusExpired,
+		"orphan-2":    models.RightStatusExpired,
+		"keep-active": models.RightStatusActive,
+	} {
+		right, errGet := s.repo.GetRightByToken(s.ctx, token)
+		require.NoError(s.T(), errGet)
+		require.Equal(s.T(), expected, right.Status, "token %s", token)
+	}
+
+	// An empty batch is a no-op rather than a statement with no arguments.
+	require.NoError(s.T(), s.repo.ExpireRights(s.ctx, nil))
+}
+
 func (s *RepoTestSuite) TestUseRightTx_StockDepleted() {
 	now := time.Now().UTC()
 
@@ -322,7 +516,7 @@ func (s *RepoTestSuite) TestUseRightTx_ConcurrentWebhooksTransitionOnce() {
 			defer wg.Done()
 			<-start
 
-			right, transitioned, useErr := s.repo.UseRightTx(s.ctx, "token-race", fmt.Sprintf("order-%d", index), now)
+			right, transitioned, useErr := s.repo.UseRightTx(s.ctx, "token-race", "order-race", now)
 			if useErr != nil {
 				errCh <- useErr
 				return
@@ -350,6 +544,64 @@ func (s *RepoTestSuite) TestUseRightTx_ConcurrentWebhooksTransitionOnce() {
 	err = s.pool.QueryRow(s.ctx, `SELECT product_count FROM product_stock WHERE product_id=$1`, "prod-1").Scan(&count)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 4, count)
+
+	var outboxCount int
+	err = s.pool.QueryRow(s.ctx, `SELECT count(*) FROM stock_decrement_outbox WHERE right_token=$1`, "token-race").Scan(&outboxCount)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, outboxCount)
+}
+
+func (s *RepoTestSuite) TestStockDecrementOutboxClaimAndAck() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(s.T(), s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "token-outbox", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusUsed, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	}))
+
+	_, err := s.pool.Exec(s.ctx, `
+		INSERT INTO stock_decrement_outbox
+			(id, right_token, order_id, product_id, quantity, next_attempt_at, created_at, updated_at)
+		VALUES
+			('00000000-0000-0000-0000-000000000001', 'token-outbox', 'order-outbox', 'prod-1', 1, $1, $1, $1)
+	`, now.Add(-time.Second))
+	require.NoError(s.T(), err)
+
+	leaseUntil := now.Add(30 * time.Second)
+	events, err := s.repo.ClaimStockDecrements(s.ctx, now, leaseUntil, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), events, 1)
+	require.Equal(s.T(), "00000000-0000-0000-0000-000000000001", events[0].ID)
+	require.Equal(s.T(), 1, events[0].Attempts)
+	require.NotNil(s.T(), events[0].LockedUntil)
+
+	events, err = s.repo.ClaimStockDecrements(s.ctx, now, leaseUntil.Add(time.Minute), 10)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), events)
+
+	require.NoError(s.T(), s.repo.MarkStockDecrementDelivered(s.ctx, "00000000-0000-0000-0000-000000000001", now))
+
+	events, err = s.repo.ClaimStockDecrements(s.ctx, leaseUntil.Add(time.Minute), leaseUntil.Add(2*time.Minute), 10)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), events)
+}
+
+func (s *RepoTestSuite) TestStockDecrementOutboxExpiredLeaseIsReclaimed() {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(s.T(), s.repo.SaveRight(s.ctx, &models.Right{
+		Token: "token-reclaim", UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusUsed, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	}))
+
+	_, err := s.pool.Exec(s.ctx, `
+		INSERT INTO stock_decrement_outbox
+			(id, right_token, order_id, product_id, quantity, attempts, next_attempt_at, locked_until, created_at, updated_at)
+		VALUES
+			('00000000-0000-0000-0000-000000000002', 'token-reclaim', 'order-reclaim', 'prod-1', 1, 2, $1, $2, $1, $1)
+	`, now.Add(-time.Minute), now.Add(-time.Second))
+	require.NoError(s.T(), err)
+
+	events, err := s.repo.ClaimStockDecrements(s.ctx, now, now.Add(30*time.Second), 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), events, 1)
+	require.Equal(s.T(), 3, events[0].Attempts)
 }
 
 func (s *RepoTestSuite) TestExpireRightAndUpsertMembershipTx() {
@@ -457,6 +709,68 @@ func (s *RepoTestSuite) TestRightTerminalTransitionsRace() {
 	default:
 		s.T().Fatalf("unexpected final right status: %s", right.Status)
 	}
+}
+
+func (s *RepoTestSuite) TestLoadRecoverySnapshot() {
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	activeToken := "recovery-active"
+	usedToken := "recovery-used"
+	offerAvailable := 2
+	orderID := "order-recovery"
+	usedAt := base.Add(3 * time.Minute)
+
+	_, err := s.pool.Exec(s.ctx, `
+		INSERT INTO product_stock (product_id, product_count, total_stock, updated_at)
+		VALUES
+			('prod-a', 5, 8, $1),
+			('prod-b', 3, 3, $1)
+	`, base)
+	require.NoError(s.T(), err)
+
+	_, err = s.pool.Exec(s.ctx, `
+		INSERT INTO rights
+			(token, user_id, product_id, quantity, status, order_id, created_at, expires_at, used_at)
+		VALUES
+			($1, 'user-active', 'prod-a', 1, 'ACTIVE', NULL, $2, $3, NULL),
+			($4, 'user-used', 'prod-a', 1, 'USED', $5, $2, $3, $6)
+	`, activeToken, base, base.Add(time.Hour), usedToken, orderID, usedAt)
+	require.NoError(s.T(), err)
+
+	_, err = s.pool.Exec(s.ctx, `
+		INSERT INTO queue_memberships
+			(product_id, user_id, status, quantity, available_quantity, current_token, expires_at, created_at, updated_at)
+		VALUES
+			('prod-a', 'queued-1', 'QUEUED', 1, NULL, NULL, NULL, $1, $2),
+			('prod-a', 'active-user', 'RIGHT_ACTIVE', 1, NULL, $3, $4, $1, $5),
+			('prod-a', 'offer-user', 'OFFER_PENDING', 4, $6, NULL, $4, $1, $7),
+			('prod-b', 'queued-b', 'QUEUED', 1, NULL, NULL, NULL, $1, $2)
+	`, base, base.Add(time.Second), activeToken, base.Add(time.Hour), base.Add(2*time.Second), offerAvailable, base.Add(3*time.Second))
+	require.NoError(s.T(), err)
+
+	snapshot, err := s.repo.LoadRecoverySnapshot(s.ctx)
+	require.NoError(s.T(), err)
+
+	require.Len(s.T(), snapshot.Stocks, 2)
+	require.Equal(s.T(), "prod-a", snapshot.Stocks[0].ProductID)
+	require.Equal(s.T(), 5, snapshot.Stocks[0].ProductCount)
+	require.Equal(s.T(), "prod-b", snapshot.Stocks[1].ProductID)
+
+	require.Len(s.T(), snapshot.Memberships, 4)
+	require.Equal(s.T(), []string{"queued-1", "active-user", "offer-user", "queued-b"}, []string{
+		snapshot.Memberships[0].UserID,
+		snapshot.Memberships[1].UserID,
+		snapshot.Memberships[2].UserID,
+		snapshot.Memberships[3].UserID,
+	})
+	require.Equal(s.T(), activeToken, *snapshot.Memberships[1].CurrentToken)
+	require.Equal(s.T(), offerAvailable, *snapshot.Memberships[2].AvailableQuantity)
+
+	require.Len(s.T(), snapshot.Rights, 2)
+	require.Equal(s.T(), activeToken, snapshot.Rights[0].Token)
+	require.Equal(s.T(), models.RightStatusActive, snapshot.Rights[0].Status)
+	require.Equal(s.T(), usedToken, snapshot.Rights[1].Token)
+	require.Equal(s.T(), orderID, *snapshot.Rights[1].OrderID)
+	require.True(s.T(), usedAt.Equal(*snapshot.Rights[1].UsedAt))
 }
 
 // TestRepoTestSuite acts as the entry point for 'go test'.

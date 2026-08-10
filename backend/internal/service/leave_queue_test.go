@@ -8,6 +8,7 @@ import (
 )
 
 func (s *QueueServiceTestSuite) TestLeaveQueue_Queued() {
+	s.expectMembershipClaim("prod-1", "user-1")
 	s.mockMembershipFetch(models.MembershipStatusQueued, nil)
 	s.mockDurableUpsert(models.MembershipStatusDeclined, nil)
 	s.mockSyncCacheState(models.MembershipStatusDeclined, false, false)
@@ -19,6 +20,7 @@ func (s *QueueServiceTestSuite) TestLeaveQueue_Queued() {
 }
 
 func (s *QueueServiceTestSuite) TestLeaveQueue_RightActive() {
+	s.expectMembershipClaim("prod-1", "user-1")
 	token := "right-token"
 	mem := &models.QueueMembership{
 		ProductID:    "prod-1",
@@ -56,9 +58,20 @@ func (s *QueueServiceTestSuite) TestLeaveQueue_RightActive() {
 }
 
 func (s *QueueServiceTestSuite) TestLeaveQueue_TerminalStatus() {
+	s.expectMembershipClaim("prod-1", "user-1")
 	s.mockMembershipFetch(models.MembershipStatusPurchased, nil)
 
 	err := s.srv.LeaveQueue(s.ctx, "prod-1", "user-1")
 
 	require.ErrorIs(s.T(), err, models.ErrInvalidStatus)
+}
+
+func (s *QueueServiceTestSuite) TestLeaveQueue_ConcurrentTransitionKeepsCurrentState() {
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+	).Return(false, nil)
+
+	err := s.srv.LeaveQueue(s.ctx, "prod-1", "user-1")
+
+	require.ErrorIs(s.T(), err, models.ErrConcurrentJoin)
 }

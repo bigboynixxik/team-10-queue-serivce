@@ -12,6 +12,7 @@ import (
 	"backend/pkg/logger"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -31,6 +32,163 @@ func NewDurableRepo(pool *pgxpool.Pool) *DurableRepo {
 	}
 }
 
+// LoadRecoverySnapshot reads every durable row needed to reconstruct Redis from
+// PostgreSQL. A repeatable-read, read-only transaction keeps stock, membership,
+// and right rows on the same database snapshot.
+func (dr *DurableRepo) LoadRecoverySnapshot(ctx context.Context) (*models.RecoverySnapshot, error) {
+	log := logger.FromContext(ctx)
+
+	tx, err := dr.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.LoadRecoverySnapshot begin: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
+			log.Error("failed to rollback recovery snapshot transaction", "error", rbErr)
+		}
+	}()
+
+	stocks, err := dr.loadRecoveryStocks(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	memberships, err := dr.loadRecoveryMemberships(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	rights, err := dr.loadRecoveryRights(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.LoadRecoverySnapshot commit: %w", err)
+	}
+
+	return &models.RecoverySnapshot{
+		Stocks:      stocks,
+		Memberships: memberships,
+		Rights:      rights,
+	}, nil
+}
+
+func (dr *DurableRepo) loadRecoveryStocks(ctx context.Context, tx pgx.Tx) ([]*models.ProductStock, error) {
+	query, args, err := dr.sq.Select("product_id", "product_count", "total_stock", "updated_at").
+		From("product_stock").
+		OrderBy("product_id").
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryStocks query build: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryStocks execute: %w", err)
+	}
+	defer rows.Close()
+
+	stocks := make([]*models.ProductStock, 0)
+	for rows.Next() {
+		stock := &models.ProductStock{}
+		if err := rows.Scan(
+			&stock.ProductID, &stock.ProductCount, &stock.TotalStock, &stock.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryStocks scan: %w", err)
+		}
+
+		stocks = append(stocks, stock)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryStocks rows: %w", err)
+	}
+
+	return stocks, nil
+}
+
+func (dr *DurableRepo) loadRecoveryMemberships(ctx context.Context, tx pgx.Tx) ([]*models.QueueMembership, error) {
+	query, args, err := dr.sq.Select(
+		"id", "product_id", "user_id", "status", "quantity",
+		"available_quantity", "current_token", "expires_at", "created_at", "updated_at",
+	).
+		From("queue_memberships").
+		OrderBy("product_id", "updated_at", "id").
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryMemberships query build: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryMemberships execute: %w", err)
+	}
+	defer rows.Close()
+
+	memberships := make([]*models.QueueMembership, 0)
+	for rows.Next() {
+		membership := &models.QueueMembership{}
+		if err := rows.Scan(
+			&membership.ID, &membership.ProductID, &membership.UserID,
+			&membership.Status, &membership.Quantity, &membership.AvailableQuantity,
+			&membership.CurrentToken, &membership.ExpiresAt,
+			&membership.CreatedAt, &membership.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryMemberships scan: %w", err)
+		}
+
+		memberships = append(memberships, membership)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryMemberships rows: %w", err)
+	}
+
+	return memberships, nil
+}
+
+func (dr *DurableRepo) loadRecoveryRights(ctx context.Context, tx pgx.Tx) ([]*models.Right, error) {
+	query, args, err := dr.sq.Select(
+		"token", "user_id", "product_id", "quantity", "status",
+		"order_id", "created_at", "expires_at", "used_at",
+	).
+		From("rights").
+		OrderBy("created_at", "token").
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryRights query build: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryRights execute: %w", err)
+	}
+	defer rows.Close()
+
+	rights := make([]*models.Right, 0)
+	for rows.Next() {
+		right := &models.Right{}
+		if err := rows.Scan(
+			&right.Token, &right.UserID, &right.ProductID, &right.Quantity,
+			&right.Status, &right.OrderID, &right.CreatedAt, &right.ExpiresAt, &right.UsedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryRights scan: %w", err)
+		}
+
+		rights = append(rights, right)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.loadRecoveryRights rows: %w", err)
+	}
+
+	return rights, nil
+}
+
 // SaveRight persists a newly issued purchase right into the database.
 func (dr *DurableRepo) SaveRight(ctx context.Context, right *models.Right) error {
 	query, args, err := dr.sq.Insert("rights").
@@ -44,6 +202,49 @@ func (dr *DurableRepo) SaveRight(ctx context.Context, right *models.Right) error
 	_, err = dr.pool.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("postgres.DurableRepo.SaveRight execute: %w", err)
+	}
+
+	return nil
+}
+
+// IssueRightAndUpsertMembershipTx persists both sides of a newly issued right.
+// Keeping them in one transaction prevents an ACTIVE right from being left
+// without the membership that owns its token.
+func (dr *DurableRepo) IssueRightAndUpsertMembershipTx(
+	ctx context.Context,
+	right *models.Right,
+	membership *models.QueueMembership,
+) error {
+	log := logger.FromContext(ctx)
+
+	tx, err := dr.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx begin: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
+			log.Error("failed to rollback transaction", "error", rbErr)
+		}
+	}()
+
+	query, args, err := dr.sq.Insert("rights").
+		Columns("token", "user_id", "product_id", "quantity", "status", "order_id", "created_at", "expires_at", "used_at").
+		Values(right.Token, right.UserID, right.ProductID, right.Quantity, right.Status, right.OrderID, right.CreatedAt, right.ExpiresAt, right.UsedAt).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx right query build: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx right execute: %w", err)
+	}
+
+	if err := dr.upsertMembershipTx(ctx, tx, membership); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx membership: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.IssueRightAndUpsertMembershipTx commit: %w", err)
 	}
 
 	return nil
@@ -112,9 +313,10 @@ func (dr *DurableRepo) UpsertMembership(ctx context.Context, membership *models.
 	return nil
 }
 
-// UseRightTx atomically transitions an ACTIVE right to USED and decrements
-// product_stock by the quantity stored in PostgreSQL. The row lock makes
-// concurrent payment webhooks idempotent.
+// UseRightTx atomically transitions an ACTIVE right to USED, decrements
+// product_stock, writes a stock decrement outbox event, and finalizes the
+// matching membership if it still owns the same token. The row lock makes
+// duplicate payment webhooks idempotent.
 func (dr *DurableRepo) UseRightTx(
 	ctx context.Context,
 	token string,
@@ -140,6 +342,9 @@ func (dr *DurableRepo) UseRightTx(
 
 	switch right.Status {
 	case models.RightStatusUsed:
+		if right.OrderID == nil || *right.OrderID != orderID {
+			return nil, false, models.ErrTokenUsed
+		}
 		return right, false, nil
 	case models.RightStatusExpired:
 		return nil, false, models.ErrTokenExpired
@@ -194,6 +399,39 @@ func (dr *DurableRepo) UseRightTx(
 		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx stock depleted: %w", models.ErrStockDepleted)
 	}
 
+	queryOutbox, argsOutbox, err := dr.sq.Insert("stock_decrement_outbox").
+		Columns("id", "right_token", "order_id", "product_id", "quantity", "next_attempt_at", "created_at", "updated_at").
+		Values(uuid.NewString(), right.Token, orderID, right.ProductID, right.Quantity, now, now, now).
+		ToSql()
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx outbox query build: %w", err)
+	}
+
+	if _, err = tx.Exec(ctx, queryOutbox, argsOutbox...); err != nil {
+		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx outbox execute: %w", err)
+	}
+
+	queryMembership, argsMembership, err := dr.sq.Update("queue_memberships").
+		Set("status", models.MembershipStatusPurchased).
+		Set("available_quantity", nil).
+		Set("current_token", nil).
+		Set("expires_at", nil).
+		Set("updated_at", now).
+		Where(sq.Eq{
+			"product_id":    right.ProductID,
+			"user_id":       right.UserID,
+			"status":        models.MembershipStatusRightActive,
+			"current_token": token,
+		}).
+		ToSql()
+	if err != nil {
+		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx membership query build: %w", err)
+	}
+
+	if _, err = tx.Exec(ctx, queryMembership, argsMembership...); err != nil {
+		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx membership execute: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		log.Error("failed to commit transaction", "error", err)
 		return nil, false, fmt.Errorf("postgres.DurableRepo.UseRightTx commit: %w", err)
@@ -204,6 +442,128 @@ func (dr *DurableRepo) UseRightTx(
 	right.UsedAt = &now
 
 	return right, true, nil
+}
+
+// ClaimStockDecrements leases due stock decrement events for delivery. Multiple
+// API instances can run this safely because SKIP LOCKED gives each row to one
+// worker at a time, and an expired lease can be claimed again later.
+func (dr *DurableRepo) ClaimStockDecrements(
+	ctx context.Context,
+	now time.Time,
+	leaseUntil time.Time,
+	limit int,
+) ([]models.StockDecrement, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	query, args, err := dr.sq.Update("stock_decrement_outbox").
+		Set("locked_until", leaseUntil).
+		Set("attempts", sq.Expr("attempts + 1")).
+		Set("updated_at", now).
+		Where(`
+			id IN (
+				SELECT id
+				FROM stock_decrement_outbox
+				WHERE delivered_at IS NULL
+					AND next_attempt_at <= ?
+					AND (locked_until IS NULL OR locked_until <= ?)
+				ORDER BY next_attempt_at, created_at
+				FOR UPDATE SKIP LOCKED
+				LIMIT ?
+			)
+		`, now, now, limit).
+		Suffix(`
+			RETURNING id::text, right_token, order_id, product_id, quantity, attempts,
+				next_attempt_at, locked_until, delivered_at, last_error, created_at, updated_at
+		`).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.ClaimStockDecrements query build: %w", err)
+	}
+
+	rows, err := dr.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.ClaimStockDecrements execute: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]models.StockDecrement, 0)
+	for rows.Next() {
+		event := models.StockDecrement{}
+		if err := rows.Scan(
+			&event.ID,
+			&event.RightToken,
+			&event.OrderID,
+			&event.ProductID,
+			&event.Quantity,
+			&event.Attempts,
+			&event.NextAttemptAt,
+			&event.LockedUntil,
+			&event.DeliveredAt,
+			&event.LastError,
+			&event.CreatedAt,
+			&event.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres.DurableRepo.ClaimStockDecrements scan: %w", err)
+		}
+
+		events = append(events, event)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.ClaimStockDecrements rows: %w", err)
+	}
+
+	return events, nil
+}
+
+// MarkStockDecrementDelivered acknowledges a delivered event.
+func (dr *DurableRepo) MarkStockDecrementDelivered(ctx context.Context, eventID string, now time.Time) error {
+	query, args, err := dr.sq.Update("stock_decrement_outbox").
+		Set("delivered_at", now).
+		Set("locked_until", nil).
+		Set("last_error", nil).
+		Set("updated_at", now).
+		Where(sq.Eq{"id": eventID}).
+		Where(sq.Eq{"delivered_at": nil}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.MarkStockDecrementDelivered query build: %w", err)
+	}
+
+	if _, err := dr.pool.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.MarkStockDecrementDelivered execute: %w", err)
+	}
+
+	return nil
+}
+
+// RescheduleStockDecrement releases a failed event for a later retry.
+func (dr *DurableRepo) RescheduleStockDecrement(
+	ctx context.Context,
+	eventID string,
+	nextAttemptAt time.Time,
+	lastError string,
+	now time.Time,
+) error {
+	query, args, err := dr.sq.Update("stock_decrement_outbox").
+		Set("next_attempt_at", nextAttemptAt).
+		Set("locked_until", nil).
+		Set("last_error", lastError).
+		Set("updated_at", now).
+		Where(sq.Eq{"id": eventID}).
+		Where(sq.Eq{"delivered_at": nil}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.RescheduleStockDecrement query build: %w", err)
+	}
+
+	if _, err := dr.pool.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.RescheduleStockDecrement execute: %w", err)
+	}
+
+	return nil
 }
 
 // ExpireRightAndUpsertMembershipTx atomically invalidates an unpaid right and
@@ -348,6 +708,31 @@ func (dr *DurableRepo) SaveInitialStock(ctx context.Context, stock *models.Produ
 	_, err = dr.pool.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("postgres.DurableRepo.SaveInitialStock execute: %w", err)
+	}
+
+	return nil
+}
+
+// ExpireRights marks the given ACTIVE rights as EXPIRED in one statement.
+//
+// Recovery uses it to settle rights no live membership points at any more. Such
+// a right holds nothing — the membership that owned it is already terminal — but
+// left ACTIVE it would keep failing the consistency check on every restart.
+func (dr *DurableRepo) ExpireRights(ctx context.Context, tokens []string) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	query, args, err := dr.sq.Update("rights").
+		Set("status", models.RightStatusExpired).
+		Where(sq.Eq{"token": tokens, "status": models.RightStatusActive}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.ExpireRights query build: %w", err)
+	}
+
+	if _, err = dr.pool.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.ExpireRights execute: %w", err)
 	}
 
 	return nil
