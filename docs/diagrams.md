@@ -6,7 +6,11 @@
 
 В сценариях 1–3 каждый покупатель запрашивает одну единицу, вследствие чего поле `quantity` в запросах опущено для краткости. Сценарий 4 — единственный, в котором запрашиваемое количество превышает единицу и участвует в логике распределения.
 
-Перед созданием заказа покупатель обращается к `GET /rights/{token}` за проверкой своего права. Проверка отсекает недействительные попытки — предъявление чужого либо истёкшего права — до того, как они достигнут конечной точки оформления заказа. Шаг показан во всех сценариях.
+Защита от обхода очереди изображена двумя шагами. Покупатель обращается к `GET /rights/{token}` перед переходом к оформлению заказа: проверка отсекает недействительные попытки — предъявление чужого либо истёкшего права — до того, как они достигнут внешней системы. Затем сама AvitoBackend обращается к `POST /internal/rights/{token}/validate` и создаёт заказ исключительно при получении кода `204`. Первый шаг является клиентским и может быть пропущен, второй представляет собой границу доверия и пропущен быть не может (`docs/design_context.md`, п. 5.8).
+
+Вход в очередь при непустой очереди приводит к состоянию `QUEUED` независимо от наличия свободных единиц: освободившиеся единицы принадлежат голове очереди, а не вновь пришедшему. Условие проверяется тем же атомарным шагом, что и распределение остатка.
+
+Уведомление AvitoBackend об уменьшении остатка (`PATCH /products/{product_id}/stock`) отправляется после ответа `202`, а не до него: событие фиксируется той же транзакцией, что и оплата, а доставляет его фоновый обработчик почтового ящика, повторяя попытки до успеха.
 
 Обращение `GET /products/{product_id}/stock` к AvitoBackend выполняется при обработке входа в очередь, не завершившегося идемпотентным возвратом существующего членства; полученное значение применяется исключительно при отсутствии локального состояния товара (`docs/design_context.md`, п. 9). Для краткости шаг показан только в сценарии 4, где значение остатка существенно для понимания последующих переходов.
 
@@ -37,14 +41,20 @@ sequenceDiagram
     Note over A: Проверка выполняется на стороне QS до обращения к AvitoBackend —<br/>недействительные попытки не достигают конечной точки оформления заказа
 
     A->>AB: Создание заказа (право предъявлено, вне скоупа)
+    AB->>QS: POST /internal/rights/{token}/validate { product_id }
+    QS-->>AB: 204 No Content
+    Note over AB: Граница доверия: заказ создаётся только при 204.<br/>Пропустить эту проверку браузер не может
+
     AB-->>A: Форма оплаты
     A->>AB: Оплата
     AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-    QS->>QS: Транзакция PostgreSQL: right(A) = USED, product_count -= quantity
-    QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }
+    QS->>QS: Транзакция PostgreSQL: right(A) = USED, product_count -= quantity,<br/>membership(A) = PURCHASED, событие в stock_decrement_outbox
     QS-->>AB: 202 Accepted
     QS-->>A: WS: { status: PURCHASED }
+
+    QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }, Idempotency-Key
+    Note over QS: Уведомление доставляет фоновый обработчик почтового ящика,<br/>повторяя попытки до успеха — сетевой сбой его не теряет
 ```
 
 ---
@@ -100,14 +110,16 @@ sequenceDiagram
     QS-->>B: 200 { valid: true }
 
     B->>AB: Создание заказа (право предъявлено, вне скоупа)
+    AB->>QS: POST /internal/rights/{token}/validate { product_id }
+    QS-->>AB: 204 No Content
     AB-->>B: Форма оплаты
     B->>AB: Оплата
     AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-    QS->>QS: Транзакция PostgreSQL: right(B) = USED, product_count -= quantity
-    QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }
+    QS->>QS: Транзакция PostgreSQL: right(B) = USED, product_count -= 1,<br/>membership(B) = PURCHASED, событие в stock_decrement_outbox
     QS-->>AB: 202 Accepted
     QS-->>B: WS: { status: PURCHASED }
+    QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }, Idempotency-Key
     Note over QS: Остаток исчерпан → входящие в очередь получают SOLD_OUT
 ```
 
@@ -146,14 +158,16 @@ sequenceDiagram
         QS-->>A: 200 { valid: true }
 
         A->>AB: Создание заказа (право предъявлено, вне скоупа)
+        AB->>QS: POST /internal/rights/{token}/validate { product_id }
+        QS-->>AB: 204 No Content
         AB-->>A: Форма оплаты
         A->>AB: Оплата
         AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-        QS->>QS: Транзакция PostgreSQL: right(A) = USED, product_count = 0
-        QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }
+        QS->>QS: Транзакция PostgreSQL: right(A) = USED, product_count = 0,<br/>membership(A) = PURCHASED, событие в stock_decrement_outbox
         QS-->>AB: 202 Accepted
         QS-->>A: WS: { status: PURCHASED }
+        QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }, Idempotency-Key
         Note over QS: Продвижение очереди при нулевом остатке →<br/>ожидающие переводятся в терминальное SOLD_OUT
     else A бездействует либо не успевает
         Note over A: См. сценарий 2 — данный путь здесь не реализуется
@@ -195,14 +209,16 @@ sequenceDiagram
     QS-->>A: 200 { valid: true }
 
     A->>AB: Создание заказа (право предъявлено, вне скоупа)
+    AB->>QS: POST /internal/rights/{token}/validate { product_id }
+    QS-->>AB: 204 No Content
     AB-->>A: Форма оплаты
     A->>AB: Оплата
     AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-    QS->>QS: Транзакция PostgreSQL: right(A) = USED, product_count = 3
-    QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }
+    QS->>QS: Транзакция PostgreSQL: right(A) = USED, product_count = 3,<br/>membership(A) = PURCHASED, событие в stock_decrement_outbox
     QS-->>AB: 202 Accepted
     QS-->>A: WS: { status: PURCHASED }
+    QS->>AB: PATCH /products/{product_id}/stock { decrement: 1 }, Idempotency-Key
     Note over QS: A завершил покупку до входа B — available_units остаётся равным 3.<br/>Это объясняет, почему B получит предложение, а не полное право на 5 единиц
 
     B->>QS: POST /queue/{product_id}/members { quantity: 5 }
@@ -232,14 +248,16 @@ sequenceDiagram
         QS-->>B: 200 { valid: true }
 
         B->>AB: Создание заказа (право предъявлено, вне скоупа)
+        AB->>QS: POST /internal/rights/{token}/validate { product_id }
+        QS-->>AB: 204 No Content
         AB-->>B: Форма оплаты
         B->>AB: Оплата
         AB-->>QS: POST /rights/{token}/events { event: payment_succeeded, order_id }
 
-        QS->>QS: Транзакция PostgreSQL: right(B) = USED, product_count = 1
-        QS->>AB: PATCH /products/{product_id}/stock { decrement: 2 }
+        QS->>QS: Транзакция PostgreSQL: right(B) = USED, product_count = 1,<br/>membership(B) = PURCHASED, событие в stock_decrement_outbox
         QS-->>AB: 202 Accepted
         QS-->>B: WS: { status: PURCHASED }
+        QS->>AB: PATCH /products/{product_id}/stock { decrement: 2 }, Idempotency-Key
     else B отказывается полностью
         Note over B: Механика совпадает с отказом C ниже: DELETE → DECLINED,<br/>право не выдаётся, заказ не создаётся, все три единицы возвращаются в пул
     end
