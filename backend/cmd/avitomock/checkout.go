@@ -5,7 +5,7 @@ import "html/template"
 // checkoutTemplate is the stand-in for the Avito checkout page. It only needs to
 // prove one thing: the purchase is completed outside Queue Service, which learns
 // about it through an event rather than by being part of the payment path
-// (docs/design_context.md, п. 7).
+// (docs/design_context.md, п. 8).
 var checkoutTemplate = template.Must(template.New("checkout").Parse(`<!doctype html>
 <html lang="ru">
 <head>
@@ -39,6 +39,7 @@ var checkoutTemplate = template.Must(template.New("checkout").Parse(`<!doctype h
   </div>
 <script>
   const token = {{.Token}};
+  const productID = {{.ProductID}};
   const button = document.getElementById('pay');
   const result = document.getElementById('result');
 
@@ -62,7 +63,7 @@ var checkoutTemplate = template.Must(template.New("checkout").Parse(`<!doctype h
       const response = await fetch('/checkout/pay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ token, product_id: productID }),
       });
       const body = await response.json();
       if (response.ok) {

@@ -93,7 +93,12 @@ func run() error {
 		cfg.RightTTL,
 		cfg.AvgPaymentTime,
 		cfg.RightHeartbeatTimeout,
+		service.WithStockOutbox(cfg.StockOutboxLease, cfg.StockOutboxBatchSize, cfg.StockOutboxMaxBackoff),
 	)
+
+	if err := queueService.RecoverCache(ctx); err != nil {
+		return err
+	}
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -103,6 +108,7 @@ func run() error {
 	shutdown.Add(srv.Shutdown)
 
 	go runExpirationWorker(ctx, queueService, cfg.ExpirationInterval, log)
+	go runStockDecrementWorker(ctx, queueService, cfg.StockOutboxInterval, log)
 
 	errCh := make(chan error, 1)
 
@@ -143,8 +149,16 @@ func applyMigrations(pool *pgxpool.Pool) error {
 
 // runExpirationWorker is what makes an unused right come back to the queue: the
 // state machine only moves on a request or on a timer, and this is the timer
-// (docs/design_context.md, п. 4).
+// (docs/design_context.md, п. 5.5).
 func runExpirationWorker(ctx context.Context, svc *service.QueueService, interval time.Duration, log *slog.Logger) {
+	process := func() {
+		if err := svc.ProcessExpirations(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("process expirations", "error", err)
+		}
+	}
+
+	process()
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -153,9 +167,29 @@ func runExpirationWorker(ctx context.Context, svc *service.QueueService, interva
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := svc.ProcessExpirations(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				log.Error("process expirations", "error", err)
-			}
+			process()
+		}
+	}
+}
+
+func runStockDecrementWorker(ctx context.Context, svc *service.QueueService, interval time.Duration, log *slog.Logger) {
+	process := func() {
+		if err := svc.ProcessStockDecrementOutbox(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("process stock decrement outbox", "error", err)
+		}
+	}
+
+	process()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			process()
 		}
 	}
 }

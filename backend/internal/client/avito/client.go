@@ -1,7 +1,7 @@
 // Package avito is the HTTP client for AvitoBackend, the external system that
 // owns the physical stock. Queue Service only mirrors that number locally, so
 // this client is the single place where the two systems agree on it
-// (docs/design_context.md, пп. 7 и 7.1).
+// (docs/design_context.md, пп. 8 и 9).
 package avito
 
 import (
@@ -16,10 +16,15 @@ import (
 
 // InternalTokenHeader authorises service-to-service calls. AvitoBackend is not a
 // browser and has no session, so a shared secret is the whole mechanism — this
-// closes открытый вопрос №4 from docs/design_context.md for the MVP.
+// closes the service-to-service authorisation question for the MVP
+// (docs/design_context.md, раздел 13).
 const InternalTokenHeader = "X-Internal-Token" //nolint:gosec // header name, not a credential
 
 const defaultTimeout = 5 * time.Second
+
+// IdempotencyKeyHeader lets AvitoBackend safely deduplicate retried stock
+// decrement requests.
+const IdempotencyKeyHeader = "Idempotency-Key"
 
 // ErrUnexpectedStatus is returned when AvitoBackend answers with an unexpected code.
 var ErrUnexpectedStatus = errors.New("avito: unexpected status")
@@ -83,7 +88,7 @@ func (c *Client) GetInitialStock(ctx context.Context, productID string) (int, er
 
 // DecrementStock reports a sale. AvitoBackend is the source of truth for the
 // physical stock, so this call is what makes a purchase real outside our service.
-func (c *Client) DecrementStock(ctx context.Context, productID string, quantity int) error {
+func (c *Client) DecrementStock(ctx context.Context, idempotencyKey string, productID string, quantity int) error {
 	payload, err := json.Marshal(decrementRequest{Decrement: quantity})
 	if err != nil {
 		return fmt.Errorf("avito.DecrementStock encode: %w", err)
@@ -94,6 +99,7 @@ func (c *Client) DecrementStock(ctx context.Context, productID string, quantity 
 		return fmt.Errorf("avito.DecrementStock build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(IdempotencyKeyHeader, idempotencyKey)
 	c.authorize(req)
 
 	resp, err := c.http.Do(req)

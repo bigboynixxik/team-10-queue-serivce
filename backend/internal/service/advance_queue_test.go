@@ -27,10 +27,15 @@ func (s *QueueServiceTestSuite) mockAdvanceQueueSequence(results ...popResult) {
 	for _, r := range results {
 		calls = append(calls, s.mockCache.EXPECT().PopAndAllocate(s.ctx, "prod-1").
 			Return(r.UID, r.Alloc, r.Avail, r.SoldOut, r.Status, r.Score, r.Err))
+		if r.Status == models.MembershipStatusRightActive ||
+			r.Status == models.MembershipStatusOfferPending ||
+			r.Status == models.MembershipStatusSoldOut {
+			s.expectMembershipClaim("prod-1", r.UID)
+		}
 	}
 
 	calls = append(calls, s.mockCache.EXPECT().PopAndAllocate(s.ctx, "prod-1").
-		Return("", 0, 0, false, models.MembershipStatus(""), 0.0, nil))
+		Return("", 0, 0, false, models.MembershipStatus(""), 0.0, nil).AnyTimes())
 
 	gomock.InOrder(calls...)
 }
@@ -67,6 +72,38 @@ func (s *QueueServiceTestSuite) TestAdvanceQueue_QueuedBreaks() {
 	require.NoError(s.T(), err)
 }
 
+func (s *QueueServiceTestSuite) TestAdvanceQueue_ClaimLostRollsBackAllocation() {
+	s.mockCache.EXPECT().PopAndAllocate(s.ctx, "prod-1").Return(
+		"user-1", 2, 0, false, models.MembershipStatusRightActive, 7.0, nil,
+	)
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+	).Return(false, nil)
+	s.mockCache.EXPECT().RestoreAvailableUnits(gomock.Any(), "prod-1", 2).Return(nil)
+	s.mockCache.EXPECT().Requeue(gomock.Any(), "prod-1", "user-1", 7.0).Return(nil)
+
+	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
+
+	require.ErrorIs(s.T(), err, models.ErrConcurrentJoin)
+}
+
+func (s *QueueServiceTestSuite) TestAdvanceQueue_ClaimLostReportsRollbackFailure() {
+	rollbackErr := errors.New("redis stock rollback failed")
+	s.mockCache.EXPECT().PopAndAllocate(s.ctx, "prod-1").Return(
+		"user-1", 2, 0, false, models.MembershipStatusRightActive, 7.0, nil,
+	)
+	s.mockCache.EXPECT().ClaimMembership(
+		gomock.Any(), "prod-1", "user-1", gomock.Any(), gomock.Any(),
+	).Return(false, nil)
+	s.mockCache.EXPECT().RestoreAvailableUnits(gomock.Any(), "prod-1", 2).Return(rollbackErr)
+	s.mockCache.EXPECT().Requeue(gomock.Any(), "prod-1", "user-1", 7.0).Return(nil)
+
+	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
+
+	require.ErrorIs(s.T(), err, models.ErrConcurrentJoin)
+	require.ErrorIs(s.T(), err, rollbackErr)
+}
+
 // TestAdvanceQueue_GhostUser verifies that unprocessable or stale statuses
 // are ignored and the engine continues to the next valid user in the queue.
 func (s *QueueServiceTestSuite) TestAdvanceQueue_GhostUser() {
@@ -92,7 +129,7 @@ func (s *QueueServiceTestSuite) TestAdvanceQueue_MembershipFetchError() {
 
 	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
 
-	require.NoError(s.T(), err)
+	require.ErrorContains(s.T(), err, "get membership")
 }
 
 // TestAdvanceQueue_RightActive_Success verifies the happy path where a queued user
@@ -103,12 +140,7 @@ func (s *QueueServiceTestSuite) TestAdvanceQueue_RightActive_Success() {
 	})
 	s.mockMembershipFetch(models.MembershipStatusQueued, nil)
 
-	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Cond(func(x any) bool {
-		r, ok := x.(*models.Right)
-		return ok && r.Status == models.RightStatusActive && r.Quantity == 2
-	})).Return(nil)
-
-	s.mockDurableUpsert(models.MembershipStatusRightActive, nil)
+	s.mockDurableIssue(2, nil)
 	s.mockSyncCacheState(models.MembershipStatusRightActive, true, true)
 
 	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
@@ -124,12 +156,13 @@ func (s *QueueServiceTestSuite) TestAdvanceQueue_RightActive_SaveRightError() {
 	})
 	s.mockMembershipFetch(models.MembershipStatusQueued, nil)
 
-	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Any()).Return(errors.New("db crash"))
+	dbErr := errors.New("db crash")
+	s.mockDurableIssue(2, dbErr)
 	s.mockRollbackHelper(2, 1.0)
 
 	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
 
-	require.NoError(s.T(), err)
+	require.ErrorIs(s.T(), err, dbErr)
 }
 
 // TestAdvanceQueue_OfferPending_Success verifies the happy path where a queued user
@@ -161,7 +194,7 @@ func (s *QueueServiceTestSuite) TestAdvanceQueue_OfferPending_UpsertError() {
 
 	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
 
-	require.NoError(s.T(), err)
+	require.ErrorContains(s.T(), err, "upsert partial membership")
 }
 
 // TestAdvanceQueue_SoldOut_Success verifies that the engine accurately flips a waiting user
@@ -193,7 +226,7 @@ func (s *QueueServiceTestSuite) TestAdvanceQueue_SoldOut_UpsertError() {
 
 	err := s.srv.AdvanceQueue(s.ctx, "prod-1")
 
-	require.NoError(s.T(), err)
+	require.ErrorContains(s.T(), err, "upsert sold_out membership")
 }
 
 // TestAdvanceQueue_MultipleSuccessfulIterations verifies that the engine successfully
@@ -208,11 +241,14 @@ func (s *QueueServiceTestSuite) TestAdvanceQueue_MultipleSuccessfulIterations() 
 		ProductID: "prod-1", UserID: "user-1", Status: models.MembershipStatusQueued,
 	}, nil)
 
-	s.mockDurable.EXPECT().SaveRight(s.ctx, gomock.Any()).Return(nil)
-	s.mockDurable.EXPECT().UpsertMembership(s.ctx, gomock.Cond(func(x any) bool {
-		m, ok := x.(*models.QueueMembership)
-		return ok && m.UserID == "user-1" && m.Status == models.MembershipStatusRightActive
-	})).Return(nil)
+	s.mockDurable.EXPECT().IssueRightAndUpsertMembershipTx(
+		s.ctx,
+		gomock.Any(),
+		gomock.Cond(func(x any) bool {
+			m, ok := x.(*models.QueueMembership)
+			return ok && m.UserID == "user-1" && m.Status == models.MembershipStatusRightActive
+		}),
+	).Return(nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, gomock.Any()).Return(nil)
 	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Cond(func(x any) bool {
 		return x.(*models.QueueMembership).UserID == "user-1"

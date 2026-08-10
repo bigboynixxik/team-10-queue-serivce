@@ -171,3 +171,53 @@ func (s *QueueServiceTestSuite) TestValidateRight_ExpiredStatus() {
 	require.ErrorIs(s.T(), err, models.ErrTokenExpired)
 	assert.Nil(s.T(), right)
 }
+
+func (s *QueueServiceTestSuite) TestValidateRightForCheckout_Success() {
+	validRight := &models.Right{
+		Token:     "valid-token",
+		ProductID: "prod-1",
+		Status:    models.RightStatusActive,
+		ExpiresAt: time.Now().UTC().Add(5 * time.Minute),
+	}
+
+	s.mockCache.EXPECT().GetRight(s.ctx, "valid-token").Return(validRight, nil)
+
+	right, err := s.srv.ValidateRightForCheckout(s.ctx, "valid-token", "prod-1")
+
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), validRight, right)
+}
+
+func (s *QueueServiceTestSuite) TestValidateRightForCheckout_ProductMismatch() {
+	validRight := &models.Right{
+		Token:     "valid-token",
+		ProductID: "prod-1",
+		Status:    models.RightStatusActive,
+		ExpiresAt: time.Now().UTC().Add(5 * time.Minute),
+	}
+
+	s.mockCache.EXPECT().GetRight(s.ctx, "valid-token").Return(validRight, nil)
+
+	right, err := s.srv.ValidateRightForCheckout(s.ctx, "valid-token", "prod-2")
+
+	require.ErrorIs(s.T(), err, models.ErrForbidden)
+	assert.Nil(s.T(), right)
+}
+
+func (s *QueueServiceTestSuite) TestValidateRightForCheckout_CacheMissDBHit() {
+	validRight := &models.Right{
+		Token:     "valid-token",
+		ProductID: "prod-1",
+		Status:    models.RightStatusActive,
+		ExpiresAt: time.Now().UTC().Add(5 * time.Minute),
+	}
+
+	s.mockCache.EXPECT().GetRight(s.ctx, "valid-token").Return(nil, models.ErrTokenNotFound)
+	s.mockDurable.EXPECT().GetRightByToken(s.ctx, "valid-token").Return(validRight, nil)
+	s.mockCache.EXPECT().SetRight(s.ctx, validRight).Return(nil)
+
+	right, err := s.srv.ValidateRightForCheckout(s.ctx, "valid-token", "prod-1")
+
+	require.NoError(s.T(), err)
+	assert.Equal(s.T(), validRight, right)
+}

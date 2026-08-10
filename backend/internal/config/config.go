@@ -62,6 +62,19 @@ type Config struct {
 	// rights and offers.
 	ExpirationInterval time.Duration `env:"EXPIRATION_INTERVAL" envDefault:"1s"`
 
+	// StockOutboxInterval is how often the background worker delivers stock
+	// decrement events to AvitoBackend.
+	StockOutboxInterval time.Duration `env:"STOCK_OUTBOX_INTERVAL" envDefault:"1s"`
+
+	// StockOutboxBatchSize bounds one delivery pass.
+	StockOutboxBatchSize int `env:"STOCK_OUTBOX_BATCH_SIZE" envDefault:"50"`
+
+	// StockOutboxLease is how long one worker owns claimed stock decrement events.
+	StockOutboxLease time.Duration `env:"STOCK_OUTBOX_LEASE" envDefault:"30s"`
+
+	// StockOutboxMaxBackoff caps retry delay for failed AvitoBackend deliveries.
+	StockOutboxMaxBackoff time.Duration `env:"STOCK_OUTBOX_MAX_BACKOFF" envDefault:"1m"`
+
 	// AvgPaymentTime is the estimated duration a single user takes to complete a purchase.
 	AvgPaymentTime time.Duration `env:"AVG_PAYMENT_TIME" envDefault:"75s"`
 }
@@ -94,6 +107,18 @@ func (c Config) validate() error {
 	}
 	if c.RightHeartbeatTimeout <= c.RightHeartbeatInterval {
 		return fmt.Errorf("RIGHT_HEARTBEAT_TIMEOUT must be greater than RIGHT_HEARTBEAT_INTERVAL")
+	}
+	if c.StockOutboxInterval <= 0 {
+		return fmt.Errorf("STOCK_OUTBOX_INTERVAL must be positive")
+	}
+	if c.StockOutboxBatchSize <= 0 {
+		return fmt.Errorf("STOCK_OUTBOX_BATCH_SIZE must be positive")
+	}
+	if c.StockOutboxLease <= 0 {
+		return fmt.Errorf("STOCK_OUTBOX_LEASE must be positive")
+	}
+	if c.StockOutboxMaxBackoff <= 0 {
+		return fmt.Errorf("STOCK_OUTBOX_MAX_BACKOFF must be positive")
 	}
 
 	return nil

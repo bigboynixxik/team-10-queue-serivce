@@ -64,6 +64,8 @@ func NewRouter(h *QueueHandler, log *slog.Logger, internalToken string) http.Han
 
 	mux.Handle("GET "+APIPrefix+"/rights/{token}",
 		mw.UserMiddleware(http.HandlerFunc(h.validateRight)))
+	mux.Handle("POST "+APIPrefix+"/internal/rights/{token}/validate",
+		mw.InternalAuth(internalToken, http.HandlerFunc(h.validateRightForCheckout)))
 	mux.Handle("POST "+APIPrefix+"/rights/{token}/events",
 		mw.InternalAuth(internalToken, http.HandlerFunc(h.rightEvents)))
 

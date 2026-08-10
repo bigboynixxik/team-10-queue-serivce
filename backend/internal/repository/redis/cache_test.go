@@ -303,6 +303,111 @@ func (s *CacheTestSuite) TestMembership_SetAndGet_WithNils() {
 	require.ErrorIs(s.T(), err, models.ErrTokenNotFound)
 }
 
+func (s *CacheTestSuite) TestMarkPurchasedIfCurrentToken_MatchingTokenUpdatesMembershipAndTimer() {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	token := "tok-paid"
+	expiresAt := now.Add(time.Minute)
+	available := 1
+
+	err := s.repo.SetMembership(s.ctx, &models.QueueMembership{
+		ProductID:         "prod-paid",
+		UserID:            "user-paid",
+		Status:            models.MembershipStatusRightActive,
+		Quantity:          1,
+		AvailableQuantity: &available,
+		CurrentToken:      &token,
+		ExpiresAt:         &expiresAt,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.AddToExpiryTimer(s.ctx, "prod-paid", "user-paid", expiresAt)
+	require.NoError(s.T(), err)
+
+	pubsub := s.client.Subscribe(s.ctx, "updates:prod-paid:user-paid")
+	defer func() {
+		require.NoError(s.T(), pubsub.Close())
+	}()
+	_, err = pubsub.Receive(s.ctx)
+	require.NoError(s.T(), err)
+
+	applied, err := s.repo.MarkPurchasedIfCurrentToken(s.ctx, &models.Right{
+		Token:     token,
+		ProductID: "prod-paid",
+		UserID:    "user-paid",
+	}, now.Add(time.Second))
+	require.NoError(s.T(), err)
+	require.True(s.T(), applied)
+
+	fetched, err := s.repo.GetMembership(s.ctx, "prod-paid", "user-paid")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.MembershipStatusPurchased, fetched.Status)
+	require.Nil(s.T(), fetched.AvailableQuantity)
+	require.Nil(s.T(), fetched.CurrentToken)
+	require.Nil(s.T(), fetched.ExpiresAt)
+
+	_, err = s.client.ZScore(s.ctx, "expiring:rights", "prod-paid:user-paid").Result()
+	require.ErrorIs(s.T(), err, redis.Nil)
+
+	select {
+	case msg := <-pubsub.Channel():
+		var payload map[string]string
+		err = json.Unmarshal([]byte(msg.Payload), &payload)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), "PURCHASED", payload["status"])
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timeout waiting for purchase event")
+	}
+}
+
+func (s *CacheTestSuite) TestMarkPurchasedIfCurrentToken_StaleTokenLeavesMembershipAndTimer() {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	newToken := "new-token"
+	expiresAt := now.Add(time.Minute)
+
+	err := s.repo.SetMembership(s.ctx, &models.QueueMembership{
+		ProductID:    "prod-stale",
+		UserID:       "user-stale",
+		Status:       models.MembershipStatusRightActive,
+		Quantity:     1,
+		CurrentToken: &newToken,
+		ExpiresAt:    &expiresAt,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+	require.NoError(s.T(), err)
+	err = s.repo.AddToExpiryTimer(s.ctx, "prod-stale", "user-stale", expiresAt)
+	require.NoError(s.T(), err)
+
+	applied, err := s.repo.MarkPurchasedIfCurrentToken(s.ctx, &models.Right{
+		Token:     "old-token",
+		ProductID: "prod-stale",
+		UserID:    "user-stale",
+	}, now.Add(time.Second))
+	require.NoError(s.T(), err)
+	require.False(s.T(), applied)
+
+	fetched, err := s.repo.GetMembership(s.ctx, "prod-stale", "user-stale")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), models.MembershipStatusRightActive, fetched.Status)
+	require.Equal(s.T(), newToken, *fetched.CurrentToken)
+	require.NotNil(s.T(), fetched.ExpiresAt)
+
+	score, err := s.client.ZScore(s.ctx, "expiring:rights", "prod-stale:user-stale").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(expiresAt.Unix()), score)
+}
+
+func (s *CacheTestSuite) TestMarkPurchasedIfCurrentToken_MissingMembershipReturnsFalse() {
+	applied, err := s.repo.MarkPurchasedIfCurrentToken(s.ctx, &models.Right{
+		Token:     "ghost-token",
+		ProductID: "ghost-product",
+		UserID:    "ghost-user",
+	}, time.Now().UTC())
+	require.NoError(s.T(), err)
+	require.False(s.T(), applied)
+}
+
 func (s *CacheTestSuite) TestRight_SetAndGet() {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 
@@ -521,37 +626,24 @@ func (s *CacheTestSuite) TestGetFirstInQueue() {
 	require.Equal(s.T(), int64(2), count)
 }
 
-func (s *CacheTestSuite) TestGetAndRemoveExpired() {
+func (s *CacheTestSuite) TestClaimExpired_TakesOnlyDueItems() {
 	now := time.Now().UTC()
-	past1 := now.Add(-2 * time.Hour)
-	past2 := now.Add(-1 * time.Hour)
-	future := now.Add(1 * time.Hour)
 
-	err := s.repo.AddToExpiryTimer(s.ctx, "prod-exp", "user-old1", past1)
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(s.ctx, "prod-exp", "user-old1", now.Add(-2*time.Hour)))
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(s.ctx, "prod-exp", "user-old2", now.Add(-time.Hour)))
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(s.ctx, "prod-exp", "user-future", now.Add(time.Hour)))
+
+	claimed, err := s.repo.ClaimExpired(s.ctx, now, time.Minute, 10)
 	require.NoError(s.T(), err)
+	require.Len(s.T(), claimed, 2)
+	require.ElementsMatch(s.T(), []string{"prod-exp:user-old1", "prod-exp:user-old2"}, expiryClaimKeys(claimed))
 
-	err = s.repo.AddToExpiryTimer(s.ctx, "prod-exp", "user-old2", past2)
-	require.NoError(s.T(), err)
-
-	err = s.repo.AddToExpiryTimer(s.ctx, "prod-exp", "user-future", future)
-	require.NoError(s.T(), err)
-
-	expired, err := s.repo.GetAndRemoveExpired(s.ctx, now)
-	require.NoError(s.T(), err)
-	require.Len(s.T(), expired, 2)
-	require.Contains(s.T(), expired, "prod-exp:user-old1")
-	require.Contains(s.T(), expired, "prod-exp:user-old2")
-
+	// The claimed items left the schedule; the one still in the future stays.
 	count, err := s.client.ZCard(s.ctx, "expiring:rights").Result()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), int64(1), count)
-
-	remaining, err := s.client.ZRange(s.ctx, "expiring:rights", 0, -1).Result()
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "prod-exp:user-future", remaining[0])
 }
 
-// TestPopAndAllocate_EmptyQueue verifies that an empty queue returns an empty user ID without errors.
 func (s *CacheTestSuite) TestPopAndAllocate_EmptyQueue() {
 	uid, _, _, _, _, _, err := s.repo.PopAndAllocate(s.ctx, "prod-empty")
 	require.NoError(s.T(), err)
@@ -686,6 +778,60 @@ func (s *CacheTestSuite) TestRequeue() {
 	require.Equal(s.T(), 42.5, res[0].Score)
 }
 
+func (s *CacheTestSuite) TestRestoreProductState_ReplacesStockQueueAndSeq() {
+	require.NoError(s.T(), s.client.HSet(s.ctx, "stock:prod-recovery", "product_count", 99, "available_units", 99).Err())
+	require.NoError(s.T(), s.repo.Enqueue(s.ctx, "prod-recovery", "stale-user"))
+
+	require.NoError(s.T(), s.repo.RestoreProductState(
+		s.ctx,
+		"prod-recovery",
+		5,
+		2,
+		[]string{"user-1", "user-2"},
+	))
+
+	stock, err := s.client.HGetAll(s.ctx, "stock:prod-recovery").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "5", stock["product_count"])
+	require.Equal(s.T(), "2", stock["available_units"])
+
+	queue, err := s.client.ZRangeWithScores(s.ctx, "queue:prod-recovery", 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Len(s.T(), queue, 2)
+	require.Equal(s.T(), "user-1", queue[0].Member)
+	require.Equal(s.T(), float64(1), queue[0].Score)
+	require.Equal(s.T(), "user-2", queue[1].Member)
+	require.Equal(s.T(), float64(2), queue[1].Score)
+
+	seq, err := s.client.Get(s.ctx, "queue:prod-recovery:seq").Int()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 2, seq)
+
+	require.NoError(s.T(), s.repo.Enqueue(s.ctx, "prod-recovery", "user-3"))
+	score, err := s.client.ZScore(s.ctx, "queue:prod-recovery", "user-3").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(3), score)
+}
+
+func (s *CacheTestSuite) TestResetExpiryTimers_OnlyClearsExpirationIndexes() {
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(s.ctx, "prod-expiry", "user-expiry", time.Now().UTC().Add(time.Minute)))
+	require.NoError(s.T(), s.client.ZAdd(s.ctx, "expiring:processing", redis.Z{Score: 1, Member: "prod-expiry:user-expiry"}).Err())
+	require.NoError(s.T(), s.client.HSet(s.ctx, "expiring:processing-deadlines", "prod-expiry:user-expiry", 1).Err())
+	require.NoError(s.T(), s.client.Set(s.ctx, "unrelated:key", "keep", 0).Err())
+
+	require.NoError(s.T(), s.repo.ResetExpiryTimers(s.ctx))
+
+	for _, key := range []string{"expiring:rights", "expiring:processing", "expiring:processing-deadlines"} {
+		exists, err := s.client.Exists(s.ctx, key).Result()
+		require.NoError(s.T(), err)
+		require.Zero(s.T(), exists)
+	}
+
+	value, err := s.client.Get(s.ctx, "unrelated:key").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "keep", value)
+}
+
 // TestGetQueueMetrics_Success verifies that the method correctly retrieves
 // the user's rank and the available stock when both exist in the database.
 func (s *CacheTestSuite) TestGetQueueMetrics_Success() {
@@ -810,4 +956,224 @@ func (s *CacheTestSuite) TestRefreshExpiryTimer_ExtendsExistingTimerOnlyForward(
 
 	_, err = s.client.ZScore(s.ctx, "expiring:rights", member).Result()
 	require.ErrorIs(s.T(), err, redis.Nil)
+}
+
+// TestTryAllocate_RespectsQueue verifies that a newcomer cannot take a freed unit
+// while somebody is already waiting for it. Allocation and the queue check happen
+// in one atomic step, so no window exists in which the newcomer could win.
+func (s *CacheTestSuite) TestTryAllocate_RespectsQueue() {
+	ctx := s.ctx
+	productID := "queued-product"
+
+	s.Require().NoError(s.repo.InitStock(ctx, productID, 1))
+
+	// Somebody is waiting in line.
+	s.Require().NoError(s.repo.Enqueue(ctx, productID, "waiting-user"))
+
+	// A unit is free, but it belongs to the head of the queue.
+	s.Require().NoError(s.repo.RestoreAvailableUnits(ctx, productID, 1))
+
+	allocated, available, soldOut, err := s.repo.TryAllocate(ctx, productID, 1)
+
+	s.Require().NoError(err)
+	s.Equal(0, allocated, "newcomer must not receive a right")
+	s.Equal(0, available, "newcomer must not receive a partial offer either")
+	s.False(soldOut)
+}
+
+// TestTryAllocate_EmptyQueueAllocates verifies the opposite case: with nobody
+// waiting, a newcomer is served immediately and no needless queueing happens.
+func (s *CacheTestSuite) TestTryAllocate_EmptyQueueAllocates() {
+	ctx := s.ctx
+	productID := "free-product"
+
+	s.Require().NoError(s.repo.InitStock(ctx, productID, 2))
+
+	allocated, _, soldOut, err := s.repo.TryAllocate(ctx, productID, 2)
+
+	s.Require().NoError(err)
+	s.Equal(2, allocated)
+	s.False(soldOut)
+}
+
+// TestClaimExpired_LeaseSurvivesCrash verifies the point of the lease: a claimed
+// timer that is never acknowledged comes back instead of disappearing. Without
+// it, a worker dying mid-pass left the right ACTIVE forever, with its unit out of
+// circulation.
+func (s *CacheTestSuite) TestClaimExpired_LeaseSurvivesCrash() {
+	past := time.Now().UTC().Add(-time.Minute)
+
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(s.ctx, "crash-prod", "crash-user", past))
+
+	claimed, err := s.repo.ClaimExpired(s.ctx, time.Now().UTC(), time.Second, 10)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"crash-prod:crash-user"}, expiryClaimKeys(claimed))
+
+	// While the lease holds, the work is invisible to another worker.
+	again, err := s.repo.ClaimExpired(s.ctx, time.Now().UTC(), time.Second, 10)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), again, "a claimed item must not be handed out twice")
+
+	// The worker dies without acknowledging. Once the lease runs out, the item
+	// returns to the schedule — due as of the moment it was reclaimed.
+	afterLease := time.Now().UTC().Add(2 * time.Second)
+
+	rescued, err := s.repo.ReclaimStaleExpired(s.ctx, afterLease)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, rescued)
+
+	recovered, err := s.repo.ClaimExpired(s.ctx, afterLease, time.Minute, 10)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"crash-prod:crash-user"}, expiryClaimKeys(recovered), "abandoned work must be picked up again")
+	require.Equal(s.T(), past.Truncate(time.Second), recovered[0].Deadline,
+		"reclaim must preserve the original timer deadline")
+}
+
+// TestAckExpired_DropsWork verifies that acknowledged work is gone for good and
+// is not replayed by a later reclaim.
+func (s *CacheTestSuite) TestAckExpired_DropsWork() {
+	past := time.Now().UTC().Add(-time.Minute)
+
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(s.ctx, "ack-prod", "ack-user", past))
+
+	claimed, err := s.repo.ClaimExpired(s.ctx, time.Now().UTC(), time.Second, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), claimed, 1)
+
+	require.NoError(s.T(), s.repo.AckExpired(s.ctx, claimed))
+
+	rescued, err := s.repo.ReclaimStaleExpired(s.ctx, time.Now().UTC().Add(time.Hour))
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), rescued, "acknowledged work must not come back")
+}
+
+// TestNackExpired_ReschedulesWork verifies that a failed attempt returns the item
+// to the schedule at the requested time, rather than losing it or retrying in a
+// tight loop.
+func (s *CacheTestSuite) TestNackExpired_ReschedulesWork() {
+	past := time.Now().UTC().Add(-time.Minute)
+
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(s.ctx, "nack-prod", "nack-user", past))
+
+	claimed, err := s.repo.ClaimExpired(s.ctx, time.Now().UTC(), time.Minute, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), claimed, 1)
+
+	retryAt := time.Now().UTC().Add(30 * time.Second)
+	require.NoError(s.T(), s.repo.NackExpired(s.ctx, claimed, retryAt))
+
+	tooEarly, err := s.repo.ClaimExpired(s.ctx, time.Now().UTC(), time.Minute, 10)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), tooEarly, "a rescheduled item must not be due immediately")
+
+	due, err := s.repo.ClaimExpired(s.ctx, retryAt.Add(time.Second), time.Minute, 10)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"nack-prod:nack-user"}, expiryClaimKeys(due))
+}
+
+// TestClaimExpired_RespectsBatchLimit verifies that one pass takes a bounded
+// amount of work, so a large backlog cannot be claimed under a single lease that
+// would expire halfway through.
+func (s *CacheTestSuite) TestClaimExpired_RespectsBatchLimit() {
+	past := time.Now().UTC().Add(-time.Minute)
+
+	for _, user := range []string{"u1", "u2", "u3"} {
+		require.NoError(s.T(), s.repo.AddToExpiryTimer(s.ctx, "batch-prod", user, past))
+	}
+
+	claimed, err := s.repo.ClaimExpired(s.ctx, time.Now().UTC(), time.Minute, 2)
+
+	require.NoError(s.T(), err)
+	require.Len(s.T(), claimed, 2)
+}
+
+func (s *CacheTestSuite) TestMembershipClaim_ReleaseRequiresCurrentOwner() {
+	won, err := s.repo.ClaimMembership(s.ctx, "claim-prod", "claim-user", "owner-a", time.Minute)
+	require.NoError(s.T(), err)
+	require.True(s.T(), won)
+
+	won, err = s.repo.ClaimMembership(s.ctx, "claim-prod", "claim-user", "owner-b", time.Minute)
+	require.NoError(s.T(), err)
+	require.False(s.T(), won)
+
+	require.NoError(s.T(), s.repo.ReleaseMembershipClaim(
+		s.ctx, "claim-prod", "claim-user", "owner-b",
+	))
+
+	won, err = s.repo.ClaimMembership(s.ctx, "claim-prod", "claim-user", "owner-b", time.Minute)
+	require.NoError(s.T(), err)
+	require.False(s.T(), won, "a non-owner must not release the current owner's claim")
+
+	require.NoError(s.T(), s.repo.ReleaseMembershipClaim(
+		s.ctx, "claim-prod", "claim-user", "owner-a",
+	))
+	won, err = s.repo.ClaimMembership(s.ctx, "claim-prod", "claim-user", "owner-b", time.Minute)
+	require.NoError(s.T(), err)
+	require.True(s.T(), won)
+}
+
+func (s *CacheTestSuite) TestExpirationClaim_StaleWorkerCannotAckOrNackNewLease() {
+	base := time.Now().UTC().Truncate(time.Second)
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(
+		s.ctx, "fence-prod", "fence-user", base.Add(-time.Minute),
+	))
+
+	first, err := s.repo.ClaimExpired(s.ctx, base, time.Second, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), first, 1)
+
+	reclaimedAt := base.Add(2 * time.Second)
+	rescued, err := s.repo.ReclaimStaleExpired(s.ctx, reclaimedAt)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, rescued)
+
+	second, err := s.repo.ClaimExpired(s.ctx, reclaimedAt, time.Minute, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), second, 1)
+
+	require.NoError(s.T(), s.repo.AckExpired(s.ctx, first))
+	require.NoError(s.T(), s.repo.NackExpired(s.ctx, first, reclaimedAt.Add(time.Minute)))
+
+	score, err := s.client.ZScore(s.ctx, "expiring:processing", second[0].Key).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(second[0].LeaseUntil.UnixMilli()), score,
+		"a stale worker must not alter a lease owned by a newer worker")
+
+	require.NoError(s.T(), s.repo.AckExpired(s.ctx, second))
+}
+
+func (s *CacheTestSuite) TestReclaimStaleExpired_PreservesNewerScheduledTimer() {
+	base := time.Now().UTC().Truncate(time.Second)
+	oldDeadline := base.Add(-time.Minute)
+	newDeadline := base.Add(time.Hour)
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(
+		s.ctx, "newer-prod", "newer-user", oldDeadline,
+	))
+
+	oldClaim, err := s.repo.ClaimExpired(s.ctx, base, time.Second, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), oldClaim, 1)
+
+	// A new lifecycle schedules its own timer while the old one is processing.
+	require.NoError(s.T(), s.repo.AddToExpiryTimer(
+		s.ctx, "newer-prod", "newer-user", newDeadline,
+	))
+
+	rescued, err := s.repo.ReclaimStaleExpired(s.ctx, base.Add(2*time.Second))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, rescued)
+
+	score, err := s.client.ZScore(s.ctx, "expiring:rights", "newer-prod:newer-user").Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), float64(newDeadline.Unix()), score,
+		"reclaiming an old lifecycle must not overwrite its newer timer")
+}
+
+func expiryClaimKeys(claims []models.ExpiryClaim) []string {
+	keys := make([]string, 0, len(claims))
+	for _, claim := range claims {
+		keys = append(keys, claim.Key)
+	}
+
+	return keys
 }

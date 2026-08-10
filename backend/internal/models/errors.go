@@ -20,6 +20,10 @@ var (
 	ErrMembershipNotFound = errors.New("membership not found")
 	ErrNoPendingOffer     = errors.New("no pending offer")
 
+	// ErrConcurrentJoin means another request for the same user is still deciding
+	// their entry into the queue. Retrying is safe: the claim behind it expires.
+	ErrConcurrentJoin = errors.New("concurrent join in progress")
+
 	// Backward-compatible aliases.
 	ErrInvalidQuantity = ErrQuantityInvalid
 	ErrSoldOut         = ErrStockDepleted

@@ -19,3 +19,6 @@ coverage/
 !.env.example
 
 .DS_Store
+
+# Скриншоты и заметки, не относящиеся к коду
+imgs/
