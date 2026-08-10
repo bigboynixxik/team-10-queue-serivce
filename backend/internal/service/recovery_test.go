@@ -53,7 +53,9 @@ func (s *QueueServiceTestSuite) TestRecoverCache_RestoresDurableState() {
 	s.Require().NoError(s.srv.RecoverCache(s.ctx))
 }
 
-func (s *QueueServiceTestSuite) TestRecoverCache_RejectsNegativeAvailableUnits() {
+// Held units exceeding the stock is a contradiction between durable rows. The
+// service still has to start, so the pool is closed instead of going negative.
+func (s *QueueServiceTestSuite) TestRecoverCache_ClampsNegativeAvailableUnits() {
 	now := time.Now().UTC()
 	token := "too-big-right"
 	expiresAt := now.Add(time.Minute)
@@ -70,13 +72,19 @@ func (s *QueueServiceTestSuite) TestRecoverCache_RejectsNegativeAvailableUnits()
 	}
 
 	s.mockDurable.EXPECT().LoadRecoverySnapshot(s.ctx).Return(snapshot, nil)
+	s.mockCache.EXPECT().ResetExpiryTimers(s.ctx).Return(nil)
+	s.mockCache.EXPECT().RestoreProductState(s.ctx, "prod-1", 1, 0, gomock.Any()).Return(nil)
+	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
+	s.mockCache.EXPECT().SetRight(s.ctx, gomock.Any()).Return(nil)
+	s.mockCache.EXPECT().AddToExpiryTimer(s.ctx, "prod-1", "active-user", gomock.Any()).Return(nil)
 
-	err := s.srv.RecoverCache(s.ctx)
-	s.Require().Error(err)
-	s.True(errors.Is(err, models.ErrStockDepleted))
+	s.Require().NoError(s.srv.RecoverCache(s.ctx))
 }
 
-func (s *QueueServiceTestSuite) TestRecoverCache_RejectsOrphanActiveRight() {
+// An ACTIVE right no membership points at holds nothing: whatever ended that
+// membership already returned its units. Recovery settles it instead of
+// refusing to start, which would leave the service down for good.
+func (s *QueueServiceTestSuite) TestRecoverCache_ExpiresOrphanActiveRight() {
 	now := time.Now().UTC()
 	snapshot := &models.RecoverySnapshot{
 		Stocks: []*models.ProductStock{
@@ -88,8 +96,61 @@ func (s *QueueServiceTestSuite) TestRecoverCache_RejectsOrphanActiveRight() {
 	}
 
 	s.mockDurable.EXPECT().LoadRecoverySnapshot(s.ctx).Return(snapshot, nil)
+	s.mockDurable.EXPECT().ExpireRights(s.ctx, []string{"orphan-token"}).Return(nil)
+	s.mockCache.EXPECT().ResetExpiryTimers(s.ctx).Return(nil)
+	s.mockCache.EXPECT().RestoreProductState(s.ctx, "prod-1", 3, 3, gomock.Any()).Return(nil)
+	s.mockCache.EXPECT().SetRight(s.ctx, gomock.Cond(func(right *models.Right) bool {
+		return right.Token == "orphan-token" && right.Status == models.RightStatusExpired
+	})).Return(nil)
 
-	err := s.srv.RecoverCache(s.ctx)
-	s.Require().Error(err)
-	s.True(errors.Is(err, models.ErrInvalidStatus))
+	s.Require().NoError(s.srv.RecoverCache(s.ctx))
+}
+
+// A RIGHT_ACTIVE membership whose right is already USED must not keep holding
+// stock: it is settled as DECLINED, the state an expiry would have produced.
+func (s *QueueServiceTestSuite) TestRecoverCache_SettlesMembershipWithoutUsableRight() {
+	now := time.Now().UTC()
+	staleToken := "used-token"
+	expiresAt := now.Add(time.Minute)
+	orderID := "order-1"
+	snapshot := &models.RecoverySnapshot{
+		Stocks: []*models.ProductStock{
+			{ProductID: "prod-1", ProductCount: 2, TotalStock: 2, UpdatedAt: now},
+		},
+		Memberships: []*models.QueueMembership{
+			{ProductID: "prod-1", UserID: "u1", Status: models.MembershipStatusRightActive, Quantity: 1, CurrentToken: &staleToken, ExpiresAt: &expiresAt, CreatedAt: now, UpdatedAt: now},
+		},
+		Rights: []*models.Right{
+			{Token: staleToken, UserID: "u1", ProductID: "prod-1", Quantity: 1, Status: models.RightStatusUsed, OrderID: &orderID, CreatedAt: now, ExpiresAt: expiresAt},
+		},
+	}
+
+	s.mockDurable.EXPECT().LoadRecoverySnapshot(s.ctx).Return(snapshot, nil)
+	s.mockDurable.EXPECT().UpsertMembership(s.ctx, gomock.Cond(func(m *models.QueueMembership) bool {
+		return m.Status == models.MembershipStatusDeclined && m.CurrentToken == nil && m.ExpiresAt == nil
+	})).Return(nil)
+	s.mockCache.EXPECT().ResetExpiryTimers(s.ctx).Return(nil)
+	// The membership holds nothing any more, so all two units stay available.
+	s.mockCache.EXPECT().RestoreProductState(s.ctx, "prod-1", 2, 2, gomock.Any()).Return(nil)
+	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
+	s.mockCache.EXPECT().SetRight(s.ctx, gomock.Any()).Return(nil)
+
+	s.Require().NoError(s.srv.RecoverCache(s.ctx))
+}
+
+// A failing store is still fatal: starting on a half-written cache would hand
+// out stock that PostgreSQL believes is held.
+func (s *QueueServiceTestSuite) TestRecoverCache_FailsOnStoreError() {
+	now := time.Now().UTC()
+	snapshot := &models.RecoverySnapshot{
+		Stocks: []*models.ProductStock{
+			{ProductID: "prod-1", ProductCount: 1, TotalStock: 1, UpdatedAt: now},
+		},
+	}
+
+	s.mockDurable.EXPECT().LoadRecoverySnapshot(s.ctx).Return(snapshot, nil)
+	s.mockCache.EXPECT().ResetExpiryTimers(s.ctx).Return(nil)
+	s.mockCache.EXPECT().RestoreProductState(s.ctx, "prod-1", 1, 1, gomock.Any()).Return(errors.New("redis down"))
+
+	s.Require().Error(s.srv.RecoverCache(s.ctx))
 }

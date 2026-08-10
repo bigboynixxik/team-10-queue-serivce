@@ -48,6 +48,10 @@ type DurableRepo interface {
 	// and persists the corresponding terminal membership state.
 	ExpireRightAndUpsertMembershipTx(ctx context.Context, token string, membership *models.QueueMembership) (right *models.Right, transitioned bool, err error)
 
+	// ExpireRights marks the given ACTIVE rights as EXPIRED. Recovery uses it to
+	// settle rights no live membership refers to any more.
+	ExpireRights(ctx context.Context, tokens []string) error
+
 	// SaveInitialStock persists the physical stock fetched from AvitoBackend.
 	SaveInitialStock(ctx context.Context, stock *models.ProductStock) error
 

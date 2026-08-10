@@ -713,6 +713,31 @@ func (dr *DurableRepo) SaveInitialStock(ctx context.Context, stock *models.Produ
 	return nil
 }
 
+// ExpireRights marks the given ACTIVE rights as EXPIRED in one statement.
+//
+// Recovery uses it to settle rights no live membership points at any more. Such
+// a right holds nothing — the membership that owned it is already terminal — but
+// left ACTIVE it would keep failing the consistency check on every restart.
+func (dr *DurableRepo) ExpireRights(ctx context.Context, tokens []string) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	query, args, err := dr.sq.Update("rights").
+		Set("status", models.RightStatusExpired).
+		Where(sq.Eq{"token": tokens, "status": models.RightStatusActive}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("postgres.DurableRepo.ExpireRights query build: %w", err)
+	}
+
+	if _, err = dr.pool.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("postgres.DurableRepo.ExpireRights execute: %w", err)
+	}
+
+	return nil
+}
+
 // CountMembershipsByStatus returns how many users sit in each membership status
 // for a product.
 //

@@ -42,21 +42,6 @@ func (m *MockDurableRepo) EXPECT() *MockDurableRepoMockRecorder {
 	return m.recorder
 }
 
-// CountMembershipsByStatus mocks base method.
-func (m *MockDurableRepo) CountMembershipsByStatus(ctx context.Context, productID string) (map[models.MembershipStatus]int, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountMembershipsByStatus", ctx, productID)
-	ret0, _ := ret[0].(map[models.MembershipStatus]int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CountMembershipsByStatus indicates an expected call of CountMembershipsByStatus.
-func (mr *MockDurableRepoMockRecorder) CountMembershipsByStatus(ctx, productID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountMembershipsByStatus", reflect.TypeOf((*MockDurableRepo)(nil).CountMembershipsByStatus), ctx, productID)
-}
-
 // ClaimStockDecrements mocks base method.
 func (m *MockDurableRepo) ClaimStockDecrements(ctx context.Context, now, leaseUntil time.Time, limit int) ([]models.StockDecrement, error) {
 	m.ctrl.T.Helper()
@@ -70,6 +55,21 @@ func (m *MockDurableRepo) ClaimStockDecrements(ctx context.Context, now, leaseUn
 func (mr *MockDurableRepoMockRecorder) ClaimStockDecrements(ctx, now, leaseUntil, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimStockDecrements", reflect.TypeOf((*MockDurableRepo)(nil).ClaimStockDecrements), ctx, now, leaseUntil, limit)
+}
+
+// CountMembershipsByStatus mocks base method.
+func (m *MockDurableRepo) CountMembershipsByStatus(ctx context.Context, productID string) (map[models.MembershipStatus]int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountMembershipsByStatus", ctx, productID)
+	ret0, _ := ret[0].(map[models.MembershipStatus]int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountMembershipsByStatus indicates an expected call of CountMembershipsByStatus.
+func (mr *MockDurableRepoMockRecorder) CountMembershipsByStatus(ctx, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountMembershipsByStatus", reflect.TypeOf((*MockDurableRepo)(nil).CountMembershipsByStatus), ctx, productID)
 }
 
 // ExpireRightAndUpsertMembershipTx mocks base method.
@@ -86,6 +86,20 @@ func (m *MockDurableRepo) ExpireRightAndUpsertMembershipTx(ctx context.Context, 
 func (mr *MockDurableRepoMockRecorder) ExpireRightAndUpsertMembershipTx(ctx, token, membership any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpireRightAndUpsertMembershipTx", reflect.TypeOf((*MockDurableRepo)(nil).ExpireRightAndUpsertMembershipTx), ctx, token, membership)
+}
+
+// ExpireRights mocks base method.
+func (m *MockDurableRepo) ExpireRights(ctx context.Context, tokens []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExpireRights", ctx, tokens)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ExpireRights indicates an expected call of ExpireRights.
+func (mr *MockDurableRepoMockRecorder) ExpireRights(ctx, tokens any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpireRights", reflect.TypeOf((*MockDurableRepo)(nil).ExpireRights), ctx, tokens)
 }
 
 // GetRightByToken mocks base method.
@@ -117,21 +131,6 @@ func (mr *MockDurableRepoMockRecorder) IssueRightAndUpsertMembershipTx(ctx, righ
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueRightAndUpsertMembershipTx", reflect.TypeOf((*MockDurableRepo)(nil).IssueRightAndUpsertMembershipTx), ctx, right, membership)
 }
 
-// LoadRecoverySnapshot mocks base method.
-func (m *MockDurableRepo) LoadRecoverySnapshot(ctx context.Context) (*models.RecoverySnapshot, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "LoadRecoverySnapshot", ctx)
-	ret0, _ := ret[0].(*models.RecoverySnapshot)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// LoadRecoverySnapshot indicates an expected call of LoadRecoverySnapshot.
-func (mr *MockDurableRepoMockRecorder) LoadRecoverySnapshot(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadRecoverySnapshot", reflect.TypeOf((*MockDurableRepo)(nil).LoadRecoverySnapshot), ctx)
-}
-
 // ListMembershipsByUser mocks base method.
 func (m *MockDurableRepo) ListMembershipsByUser(ctx context.Context, userID string) ([]*models.QueueMembership, error) {
 	m.ctrl.T.Helper()
@@ -145,6 +144,21 @@ func (m *MockDurableRepo) ListMembershipsByUser(ctx context.Context, userID stri
 func (mr *MockDurableRepoMockRecorder) ListMembershipsByUser(ctx, userID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListMembershipsByUser", reflect.TypeOf((*MockDurableRepo)(nil).ListMembershipsByUser), ctx, userID)
+}
+
+// LoadRecoverySnapshot mocks base method.
+func (m *MockDurableRepo) LoadRecoverySnapshot(ctx context.Context) (*models.RecoverySnapshot, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LoadRecoverySnapshot", ctx)
+	ret0, _ := ret[0].(*models.RecoverySnapshot)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LoadRecoverySnapshot indicates an expected call of LoadRecoverySnapshot.
+func (mr *MockDurableRepoMockRecorder) LoadRecoverySnapshot(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadRecoverySnapshot", reflect.TypeOf((*MockDurableRepo)(nil).LoadRecoverySnapshot), ctx)
 }
 
 // MarkStockDecrementDelivered mocks base method.
@@ -373,21 +387,6 @@ func (mr *MockCacheRepoMockRecorder) GetMembership(ctx, productID, userID any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMembership", reflect.TypeOf((*MockCacheRepo)(nil).GetMembership), ctx, productID, userID)
 }
 
-// MarkPurchasedIfCurrentToken mocks base method.
-func (m *MockCacheRepo) MarkPurchasedIfCurrentToken(ctx context.Context, right *models.Right, updatedAt time.Time) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkPurchasedIfCurrentToken", ctx, right, updatedAt)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// MarkPurchasedIfCurrentToken indicates an expected call of MarkPurchasedIfCurrentToken.
-func (mr *MockCacheRepoMockRecorder) MarkPurchasedIfCurrentToken(ctx, right, updatedAt any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkPurchasedIfCurrentToken", reflect.TypeOf((*MockCacheRepo)(nil).MarkPurchasedIfCurrentToken), ctx, right, updatedAt)
-}
-
 // GetQueueMetrics mocks base method.
 func (m *MockCacheRepo) GetQueueMetrics(ctx context.Context, productID, userID string) (int, int, error) {
 	m.ctrl.T.Helper()
@@ -447,6 +446,21 @@ func (m *MockCacheRepo) InitStock(ctx context.Context, productID string, totalSt
 func (mr *MockCacheRepoMockRecorder) InitStock(ctx, productID, totalStock any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitStock", reflect.TypeOf((*MockCacheRepo)(nil).InitStock), ctx, productID, totalStock)
+}
+
+// MarkPurchasedIfCurrentToken mocks base method.
+func (m *MockCacheRepo) MarkPurchasedIfCurrentToken(ctx context.Context, right *models.Right, updatedAt time.Time) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkPurchasedIfCurrentToken", ctx, right, updatedAt)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// MarkPurchasedIfCurrentToken indicates an expected call of MarkPurchasedIfCurrentToken.
+func (mr *MockCacheRepoMockRecorder) MarkPurchasedIfCurrentToken(ctx, right, updatedAt any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkPurchasedIfCurrentToken", reflect.TypeOf((*MockCacheRepo)(nil).MarkPurchasedIfCurrentToken), ctx, right, updatedAt)
 }
 
 // NackExpired mocks base method.
@@ -597,20 +611,6 @@ func (mr *MockCacheRepoMockRecorder) ResetExpiryTimers(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetExpiryTimers", reflect.TypeOf((*MockCacheRepo)(nil).ResetExpiryTimers), ctx)
 }
 
-// RestoreProductState mocks base method.
-func (m *MockCacheRepo) RestoreProductState(ctx context.Context, productID string, productCount, available int, queuedUserIDs []string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RestoreProductState", ctx, productID, productCount, available, queuedUserIDs)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// RestoreProductState indicates an expected call of RestoreProductState.
-func (mr *MockCacheRepoMockRecorder) RestoreProductState(ctx, productID, productCount, available, queuedUserIDs any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreProductState", reflect.TypeOf((*MockCacheRepo)(nil).RestoreProductState), ctx, productID, productCount, available, queuedUserIDs)
-}
-
 // RestoreAvailableUnits mocks base method.
 func (m *MockCacheRepo) RestoreAvailableUnits(ctx context.Context, productID string, quantity int) error {
 	m.ctrl.T.Helper()
@@ -623,6 +623,20 @@ func (m *MockCacheRepo) RestoreAvailableUnits(ctx context.Context, productID str
 func (mr *MockCacheRepoMockRecorder) RestoreAvailableUnits(ctx, productID, quantity any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreAvailableUnits", reflect.TypeOf((*MockCacheRepo)(nil).RestoreAvailableUnits), ctx, productID, quantity)
+}
+
+// RestoreProductState mocks base method.
+func (m *MockCacheRepo) RestoreProductState(ctx context.Context, productID string, productCount, available int, queuedUserIDs []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RestoreProductState", ctx, productID, productCount, available, queuedUserIDs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RestoreProductState indicates an expected call of RestoreProductState.
+func (mr *MockCacheRepoMockRecorder) RestoreProductState(ctx, productID, productCount, available, queuedUserIDs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoreProductState", reflect.TypeOf((*MockCacheRepo)(nil).RestoreProductState), ctx, productID, productCount, available, queuedUserIDs)
 }
 
 // SetMembership mocks base method.
