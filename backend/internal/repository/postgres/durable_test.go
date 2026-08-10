@@ -361,6 +361,11 @@ func (s *RepoTestSuite) TestUseRightTx_DoesNotOverwriteNewMembershipToken() {
 	require.NoError(s.T(), err)
 
 	newToken := "new-token"
+	err = s.repo.SaveRight(s.ctx, &models.Right{
+		Token: newToken, UserID: "u1", ProductID: "prod-1", Quantity: 1,
+		Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(2 * time.Minute),
+	})
+	require.NoError(s.T(), err)
 	err = s.repo.UpsertMembership(s.ctx, &models.QueueMembership{
 		ProductID:    "prod-1",
 		UserID:       "u1",
@@ -391,6 +396,40 @@ func (s *RepoTestSuite) TestUseRightTx_DoesNotOverwriteNewMembershipToken() {
 }
 
 // TestUseRightTx_StockDepleted verifies that both Right and stock roll back together.
+// TestExpireRights verifies recovery can settle orphaned rights without
+// touching the ones that already reached a terminal state.
+func (s *RepoTestSuite) TestExpireRights() {
+	now := time.Now().UTC()
+
+	err := s.repo.SaveInitialStock(s.ctx, &models.ProductStock{
+		ProductID: "prod-1", ProductCount: 5, TotalStock: 5, UpdatedAt: now,
+	})
+	require.NoError(s.T(), err)
+
+	for _, token := range []string{"orphan-1", "orphan-2", "keep-active"} {
+		err = s.repo.SaveRight(s.ctx, &models.Right{
+			Token: token, UserID: "u1", ProductID: "prod-1", Quantity: 1,
+			Status: models.RightStatusActive, CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+		})
+		require.NoError(s.T(), err)
+	}
+
+	require.NoError(s.T(), s.repo.ExpireRights(s.ctx, []string{"orphan-1", "orphan-2"}))
+
+	for token, expected := range map[string]models.RightStatus{
+		"orphan-1":    models.RightStatusExpired,
+		"orphan-2":    models.RightStatusExpired,
+		"keep-active": models.RightStatusActive,
+	} {
+		right, errGet := s.repo.GetRightByToken(s.ctx, token)
+		require.NoError(s.T(), errGet)
+		require.Equal(s.T(), expected, right.Status, "token %s", token)
+	}
+
+	// An empty batch is a no-op rather than a statement with no arguments.
+	require.NoError(s.T(), s.repo.ExpireRights(s.ctx, nil))
+}
+
 func (s *RepoTestSuite) TestUseRightTx_StockDepleted() {
 	now := time.Now().UTC()
 
