@@ -9,6 +9,8 @@ import (
 
 	"backend/internal/models"
 	"backend/pkg/logger"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -54,19 +56,19 @@ func (s *QueueService) ProcessExpirations(ctx context.Context) error {
 		return nil
 	}
 
-	handled := make([]string, 0, len(claimed))
-	failed := make([]string, 0)
+	handled := make([]models.ExpiryClaim, 0, len(claimed))
+	failed := make([]models.ExpiryClaim, 0)
 
-	for _, key := range claimed {
-		if errHandle := s.handleExpiredKey(ctx, key, now); errHandle != nil {
+	for _, claim := range claimed {
+		if errHandle := s.handleExpiredKey(ctx, claim, now); errHandle != nil {
 			log.ErrorContext(ctx, "failed to handle expiration",
-				slog.String("key", key), slog.Any("error", errHandle))
-			failed = append(failed, key)
+				slog.String("key", claim.Key), slog.Any("error", errHandle))
+			failed = append(failed, claim)
 
 			continue
 		}
 
-		handled = append(handled, key)
+		handled = append(handled, claim)
 	}
 
 	if len(handled) > 0 {
@@ -90,16 +92,36 @@ func (s *QueueService) ProcessExpirations(ctx context.Context) error {
 // handleExpiredKey applies one expired timer. Returning an error means the item
 // should be retried; returning nil means it is settled, including the cases where
 // the timer turned out to be irrelevant.
-func (s *QueueService) handleExpiredKey(ctx context.Context, key string, now time.Time) error {
+func (s *QueueService) handleExpiredKey(
+	ctx context.Context, claim models.ExpiryClaim, now time.Time,
+) error {
 	log := logger.FromContext(ctx)
 
-	productID, userID, found := parseExpiredKey(key)
+	productID, userID, found := parseExpiredKey(claim.Key)
 	if !found {
 		// A malformed key will never parse, so retrying it forever is pointless.
-		log.ErrorContext(ctx, "malformed expired key format", slog.String("key", key))
+		log.ErrorContext(ctx, "malformed expired key format", slog.String("key", claim.Key))
 
 		return nil
 	}
+
+	claimOwner := uuid.NewString()
+	won, errClaim := s.cache.ClaimMembership(
+		ctx, productID, userID, claimOwner, membershipClaimTTL,
+	)
+	if errClaim != nil {
+		return fmt.Errorf("claim membership: %w", errClaim)
+	}
+	if !won {
+		return models.ErrConcurrentJoin
+	}
+	defer func() {
+		if errRelease := s.cache.ReleaseMembershipClaim(
+			context.WithoutCancel(ctx), productID, userID, claimOwner,
+		); errRelease != nil {
+			log.WarnContext(ctx, "failed to release expiration claim", slog.Any("error", errRelease))
+		}
+	}()
 
 	mem, err := s.cache.GetMembership(ctx, productID, userID)
 	if err != nil {
@@ -109,6 +131,36 @@ func (s *QueueService) handleExpiredKey(ctx context.Context, key string, now tim
 	// The user has already paid or left; the timer refers to a state that no
 	// longer exists.
 	if mem.Status != models.MembershipStatusOfferPending && mem.Status != models.MembershipStatusRightActive {
+		return nil
+	}
+	if mem.ExpiresAt == nil {
+		return fmt.Errorf("active membership has no expiration: %w", models.ErrInvalidStatus)
+	}
+
+	// A timer is identified by product and user, so an old claimed timer may
+	// survive while the same user enters a newer lifecycle. UpdatedAt belongs to
+	// the current state, while Deadline belongs to the claimed state. A newer
+	// state must never be expired by the older claim. This comparison deliberately
+	// does not use ExpiresAt: RIGHT_ACTIVE may validly expire earlier because its
+	// heartbeat lease ran out.
+	if claim.Deadline.Before(mem.UpdatedAt) {
+		deadline := *mem.ExpiresAt
+		if mem.Status == models.MembershipStatusRightActive {
+			deadline = s.rightHeartbeatDeadline(now, deadline)
+		}
+
+		refreshed, errRefresh := s.cache.RefreshExpiryTimer(
+			ctx, productID, userID, deadline,
+		)
+		if errRefresh != nil {
+			return fmt.Errorf("refresh current expiration: %w", errRefresh)
+		}
+		if !refreshed {
+			if errAdd := s.cache.AddToExpiryTimer(ctx, productID, userID, deadline); errAdd != nil {
+				return fmt.Errorf("restore current expiration: %w", errAdd)
+			}
+		}
+
 		return nil
 	}
 
@@ -137,13 +189,9 @@ func (s *QueueService) handleExpiredKey(ctx context.Context, key string, now tim
 func (s *QueueService) expirePendingOffer(
 	ctx context.Context, mem *models.QueueMembership, now time.Time,
 ) error {
-	log := logger.FromContext(ctx)
-
 	if mem.AvailableQuantity == nil {
-		log.ErrorContext(ctx, "expired offer has no available quantity",
-			slog.String("user_id", mem.UserID))
-
-		return nil
+		return fmt.Errorf("expired offer for user %s has no available quantity: %w",
+			mem.UserID, models.ErrInvalidStatus)
 	}
 
 	productID := mem.ProductID
@@ -159,17 +207,23 @@ func (s *QueueService) expirePendingOffer(
 		return fmt.Errorf("upsert expired membership: %w", err)
 	}
 
-	s.syncCacheState(ctx, mem, nil)
+	var operationErrors []error
+	if errSync := s.syncCacheState(ctx, mem, nil); errSync != nil {
+		operationErrors = append(operationErrors, fmt.Errorf("sync expired offer: %w", errSync))
+	}
 
 	if returnedQty > 0 {
 		if errRestore := s.cache.RestoreAvailableUnits(ctx, productID, returnedQty); errRestore != nil {
-			log.ErrorContext(ctx, "failed to restore units on expiration", slog.Any("error", errRestore))
+			operationErrors = append(operationErrors, fmt.Errorf("restore expired offer units: %w", errRestore))
 		}
 	}
 
 	if errAdvance := s.AdvanceQueue(ctx, productID); errAdvance != nil {
-		log.ErrorContext(ctx, "failed to advance queue after expiration",
-			slog.Any("error", errAdvance), slog.String("product_id", productID))
+		operationErrors = append(operationErrors, fmt.Errorf("advance queue: %w", errAdvance))
+	}
+
+	if errJoined := errors.Join(operationErrors...); errJoined != nil {
+		return fmt.Errorf("expire pending offer cache reconciliation: %w", errJoined)
 	}
 
 	return nil

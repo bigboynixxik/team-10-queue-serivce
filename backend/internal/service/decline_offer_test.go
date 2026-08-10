@@ -12,6 +12,7 @@ import (
 // TestDeclineOffer_Success verifies that rejecting an offer restores the full available
 // quantity to the pool, removes the expiry timer, and advances the queue.
 func (s *QueueServiceTestSuite) TestDeclineOffer_Success() {
+	s.expectMembershipClaim("prod-1", "user-1")
 	s.mockMembershipFetch(models.MembershipStatusOfferPending, ptr(3))
 
 	s.mockDurableUpsert(models.MembershipStatusDeclined, nil)
@@ -29,6 +30,7 @@ func (s *QueueServiceTestSuite) TestDeclineOffer_Success() {
 // TestDeclineOffer_InvalidStatus verifies that attempting to decline an offer
 // is rejected if the user is not in the OFFER_PENDING state.
 func (s *QueueServiceTestSuite) TestDeclineOffer_InvalidStatus() {
+	s.expectMembershipClaim("prod-1", "user-1")
 	s.mockMembershipFetch(models.MembershipStatusQueued, nil)
 
 	err := s.srv.DeclineOffer(s.ctx, "prod-1", "user-1")
@@ -39,6 +41,7 @@ func (s *QueueServiceTestSuite) TestDeclineOffer_InvalidStatus() {
 // TestDeclineOffer_NilAvailableQuantity verifies that corrupted cache data missing the
 // available quantity safely aborts the operation instead of causing a panic.
 func (s *QueueServiceTestSuite) TestDeclineOffer_NilAvailableQuantity() {
+	s.expectMembershipClaim("prod-1", "user-1")
 	s.mockMembershipFetch(models.MembershipStatusOfferPending, nil)
 
 	err := s.srv.DeclineOffer(s.ctx, "prod-1", "user-1")
@@ -49,6 +52,7 @@ func (s *QueueServiceTestSuite) TestDeclineOffer_NilAvailableQuantity() {
 // TestDeclineOffer_UpsertError verifies that a database failure while updating the final
 // declined state is correctly propagated back to the caller.
 func (s *QueueServiceTestSuite) TestDeclineOffer_UpsertError() {
+	s.expectMembershipClaim("prod-1", "user-1")
 	s.mockMembershipFetch(models.MembershipStatusOfferPending, ptr(3))
 
 	dbErr := errors.New("db timeout")
@@ -62,6 +66,7 @@ func (s *QueueServiceTestSuite) TestDeclineOffer_UpsertError() {
 // TestDeclineOffer_MembershipFetchError verifies that a cache connectivity issue
 // during the initial state validation safely aborts the decline process.
 func (s *QueueServiceTestSuite) TestDeclineOffer_MembershipFetchError() {
+	s.expectMembershipClaim("prod-1", "user-1")
 	unexpectedErr := errors.New("redis timeout")
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(nil, unexpectedErr)
 
