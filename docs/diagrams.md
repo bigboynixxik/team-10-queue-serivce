@@ -104,7 +104,7 @@ sequenceDiagram
         Note over B: Экран сменяется, отсчёт запущен,<br/>переход к оформлению разблокирован
     end
 
-    Note over QS,B: Аналогичный переход наступает досрочно, если B закрывает вкладку:<br/>без подтверждения присутствия в течение RIGHT_HEARTBEAT_TIMEOUT<br/>право освобождается, не дожидаясь исчерпания RIGHT_TTL
+    Note over QS,B: Закрытие вкладки не сокращает RIGHT_TTL:<br/>выданное право действует до фиксированного expires_at.<br/>Presence timeout применяется только к состоянию QUEUED.
 
     B->>QS: GET /rights/{token}
     QS-->>B: 200 { valid: true }
