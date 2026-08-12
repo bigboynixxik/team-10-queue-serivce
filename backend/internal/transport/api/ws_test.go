@@ -83,7 +83,11 @@ func (s *realtimeQueueServiceStub) GetUserQueues(
 	context.Context,
 	string,
 ) ([]*models.UserQueue, error) {
-	return nil, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	membership := s.membership
+	return []*models.UserQueue{{Membership: &membership}}, nil
 }
 func (s *realtimeQueueServiceStub) AcceptOffer(
 	context.Context,
@@ -148,7 +152,7 @@ func (s *realtimeQueueServiceStub) CalculateETA(
 	return s.position, s.eta, nil
 }
 
-func (s *realtimeQueueServiceStub) RefreshRightHeartbeat(context.Context, string, string) error {
+func (s *realtimeQueueServiceStub) RefreshUserPresence(context.Context, string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -310,7 +314,7 @@ func TestSameMembershipIncludesQueueMetrics(t *testing.T) {
 	require.False(t, sameMembership(first, moved))
 }
 
-func TestWebSocketRefreshesActiveRightHeartbeatAfterPong(t *testing.T) {
+func TestProductWebSocketDoesNotRefreshActiveRight(t *testing.T) {
 	token := "right-token"
 	expiresAt := time.Now().UTC().Add(time.Minute)
 	service := &realtimeQueueServiceStub{
@@ -341,31 +345,12 @@ func TestWebSocketRefreshesActiveRightHeartbeatAfterPong(t *testing.T) {
 	var initial membershipResponse
 	require.NoError(t, wsjson.Read(context.Background(), conn, &initial))
 	require.Equal(t, models.MembershipStatusRightActive, initial.Status)
-	require.Eventually(t, func() bool {
-		return service.heartbeatCallCount() >= 1
-	}, time.Second, 10*time.Millisecond)
-
-	readCtx, cancelRead := context.WithCancel(context.Background())
-	readDone := make(chan error, 1)
-	go func() {
-		var next membershipResponse
-		readDone <- wsjson.Read(readCtx, conn, &next)
-	}()
-
-	require.Eventually(t, func() bool {
-		return service.heartbeatCallCount() >= 2
-	}, time.Second, 10*time.Millisecond, "Pong must refresh the active right lease")
-
+	time.Sleep(100 * time.Millisecond)
+	require.Zero(t, service.heartbeatCallCount())
 	_ = conn.CloseNow()
-	cancelRead()
-	select {
-	case <-readDone:
-	case <-time.After(time.Second):
-		t.Fatal("websocket reader did not stop")
-	}
 }
 
-func TestWebSocketStopsRefreshingWhenPongIsMissing(t *testing.T) {
+func TestUserQueuesWebSocketRefreshesPresenceAfterPong(t *testing.T) {
 	token := "right-token"
 	expiresAt := time.Now().UTC().Add(time.Minute)
 	service := &realtimeQueueServiceStub{
@@ -386,25 +371,24 @@ func TestWebSocketStopsRefreshingWhenPongIsMissing(t *testing.T) {
 	))
 	defer server.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") +
-		APIPrefix + "/queue/product-1/members/me?user_id=user-1"
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + APIPrefix + "/me/queues?user_id=user-1"
 	conn, _, err := websocket.Dial(context.Background(), wsURL, nil)
 	require.NoError(t, err)
 	defer func() { _ = conn.CloseNow() }()
 
-	var initial membershipResponse
+	var initial []userQueueResponse
 	require.NoError(t, wsjson.Read(context.Background(), conn, &initial))
-	require.Eventually(t, func() bool {
-		return service.heartbeatCallCount() == 1
-	}, time.Second, 10*time.Millisecond)
-
-	// Stop reading: a real browser that disappeared would no longer process the
-	// protocol Ping frame or send Pong.
-	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, 1, service.heartbeatCallCount())
-
-	readCtx, cancelRead := context.WithTimeout(context.Background(), time.Second)
+	readCtx, cancelRead := context.WithCancel(context.Background())
 	defer cancelRead()
-	err = wsjson.Read(readCtx, conn, &membershipResponse{})
-	require.Error(t, err)
+	go func() {
+		for {
+			var next []userQueueResponse
+			if errRead := wsjson.Read(readCtx, conn, &next); errRead != nil {
+				return
+			}
+		}
+	}()
+	require.Eventually(t, func() bool {
+		return service.heartbeatCallCount() >= 2
+	}, time.Second, 10*time.Millisecond)
 }

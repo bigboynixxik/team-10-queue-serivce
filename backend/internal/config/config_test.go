@@ -7,16 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoadHeartbeatDefaults(t *testing.T) {
+func TestLoadUserPresenceDefaults(t *testing.T) {
 	t.Setenv("PG_DSN", "postgres://test")
-	t.Setenv("RIGHT_HEARTBEAT_INTERVAL", "")
-	t.Setenv("RIGHT_HEARTBEAT_TIMEOUT", "")
+	t.Setenv("USER_PRESENCE_PING_INTERVAL", "")
+	t.Setenv("USER_PRESENCE_TIMEOUT", "")
 
 	cfg, err := Load("missing.env")
 
 	require.NoError(t, err)
-	require.Equal(t, 5*time.Second, cfg.RightHeartbeatInterval)
-	require.Equal(t, 30*time.Second, cfg.RightHeartbeatTimeout)
+	require.Equal(t, 20*time.Second, cfg.UserPresencePingInterval)
+	require.Equal(t, 90*time.Second, cfg.UserPresenceTimeout)
 }
 
 func TestLoadStockOutboxDefaults(t *testing.T) {
@@ -35,7 +35,7 @@ func TestLoadStockOutboxDefaults(t *testing.T) {
 	require.Equal(t, time.Minute, cfg.StockOutboxMaxBackoff)
 }
 
-func TestLoadRejectsInvalidHeartbeatConfiguration(t *testing.T) {
+func TestLoadRejectsInvalidUserPresenceConfiguration(t *testing.T) {
 	tests := []struct {
 		name     string
 		interval string
@@ -50,8 +50,8 @@ func TestLoadRejectsInvalidHeartbeatConfiguration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("PG_DSN", "postgres://test")
-			t.Setenv("RIGHT_HEARTBEAT_INTERVAL", tt.interval)
-			t.Setenv("RIGHT_HEARTBEAT_TIMEOUT", tt.timeout)
+			t.Setenv("USER_PRESENCE_PING_INTERVAL", tt.interval)
+			t.Setenv("USER_PRESENCE_TIMEOUT", tt.timeout)
 
 			_, err := Load("missing.env")
 

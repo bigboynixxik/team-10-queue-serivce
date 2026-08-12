@@ -1,10 +1,8 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -83,45 +81,9 @@ func (h *QueueHandler) stream(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	refreshRightHeartbeat := func() {
-		if sent.Status != models.MembershipStatusRightActive {
-			return
-		}
-
-		if err := h.service.RefreshRightHeartbeat(ctx, productID, userID); err != nil {
-			if isExpectedHeartbeatError(err) {
-				log.Debug("websocket heartbeat not refreshed", "error", err)
-				return
-			}
-			log.Error("websocket heartbeat refresh", "error", err)
-		}
-	}
-
-	probeConnection := func() bool {
-		pingCtx, cancel := context.WithTimeout(ctx, h.heartbeatInterval)
-		defer cancel()
-
-		if err := conn.Ping(pingCtx); err != nil {
-			if ctx.Err() == nil {
-				log.Debug("websocket heartbeat timeout", "error", err)
-				_ = conn.CloseNow()
-			}
-			return false
-		}
-
-		refreshRightHeartbeat()
-		return true
-	}
-
 	if !sendCurrent() {
 		return
 	}
-
-	// A successful WebSocket handshake already proves initial presence. Native
-	// Ping/Pong probes keep extending the lease after this first refresh.
-	refreshRightHeartbeat()
-	heartbeatTicker := time.NewTicker(h.heartbeatInterval)
-	defer heartbeatTicker.Stop()
 
 	for {
 		select {
@@ -133,10 +95,6 @@ func (h *QueueHandler) stream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !sendCurrent() {
-				return
-			}
-		case <-heartbeatTicker.C:
-			if !probeConnection() {
 				return
 			}
 		}
@@ -160,13 +118,6 @@ func sameMembership(a, b membershipResponse) bool {
 	default:
 		return a.ExpiresAt.Equal(*b.ExpiresAt)
 	}
-}
-
-func isExpectedHeartbeatError(err error) bool {
-	return errors.Is(err, models.ErrInvalidStatus) ||
-		errors.Is(err, models.ErrTokenExpired) ||
-		errors.Is(err, models.ErrMembershipNotFound) ||
-		errors.Is(err, models.ErrTokenNotFound)
 }
 
 func isTerminal(status models.MembershipStatus) bool {

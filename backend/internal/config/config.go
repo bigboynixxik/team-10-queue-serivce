@@ -39,11 +39,13 @@ type Config struct {
 	// RightTTL is the lifetime of an issued purchase right before it expires.
 	RightTTL time.Duration `env:"RIGHT_TTL" envDefault:"4m"`
 
-	// RightHeartbeatInterval controls how often the server probes a WebSocket client.
-	RightHeartbeatInterval time.Duration `env:"RIGHT_HEARTBEAT_INTERVAL" envDefault:"5s"`
+	// UserPresencePingInterval controls how often the server probes the user's
+	// application-wide WebSocket connection.
+	UserPresencePingInterval time.Duration `env:"USER_PRESENCE_PING_INTERVAL" envDefault:"20s"`
 
-	// RightHeartbeatTimeout is the grace period before an unconfirmed right is released.
-	RightHeartbeatTimeout time.Duration `env:"RIGHT_HEARTBEAT_TIMEOUT" envDefault:"30s"`
+	// UserPresenceTimeout is the grace period before a disconnected user is
+	// removed from their waiting queues. Issued offers and rights are unaffected.
+	UserPresenceTimeout time.Duration `env:"USER_PRESENCE_TIMEOUT" envDefault:"90s"`
 	// OfferTTL is how long a partial offer waits for the user's decision.
 
 	OfferTTL time.Duration `env:"OFFER_TTL" envDefault:"2m"`
@@ -103,14 +105,14 @@ func Load(path string) (*Config, error) {
 }
 
 func (c Config) validate() error {
-	if c.RightHeartbeatInterval <= 0 {
-		return fmt.Errorf("RIGHT_HEARTBEAT_INTERVAL must be positive")
+	if c.UserPresencePingInterval <= 0 {
+		return fmt.Errorf("USER_PRESENCE_PING_INTERVAL must be positive")
 	}
-	if c.RightHeartbeatTimeout <= 0 {
-		return fmt.Errorf("RIGHT_HEARTBEAT_TIMEOUT must be positive")
+	if c.UserPresenceTimeout <= 0 {
+		return fmt.Errorf("USER_PRESENCE_TIMEOUT must be positive")
 	}
-	if c.RightHeartbeatTimeout <= c.RightHeartbeatInterval {
-		return fmt.Errorf("RIGHT_HEARTBEAT_TIMEOUT must be greater than RIGHT_HEARTBEAT_INTERVAL")
+	if c.UserPresenceTimeout <= c.UserPresencePingInterval {
+		return fmt.Errorf("USER_PRESENCE_TIMEOUT must be greater than USER_PRESENCE_PING_INTERVAL")
 	}
 	if c.StockOutboxInterval <= 0 {
 		return fmt.Errorf("STOCK_OUTBOX_INTERVAL must be positive")

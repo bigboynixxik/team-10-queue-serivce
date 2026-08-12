@@ -57,9 +57,9 @@ type QueueService interface {
 	// and the estimated wait time in seconds before they receive an offer or right.
 	CalculateETA(ctx context.Context, productID string, userID string) (position int, etaSeconds time.Duration, err error)
 
-	// RefreshRightHeartbeat confirms that the holder of an active purchase right
-	// still has a live WebSocket connection.
-	RefreshRightHeartbeat(ctx context.Context, productID string, userID string) error
+	// RefreshUserPresence confirms that the user still has a live application-wide
+	// WebSocket connection and extends only their QUEUED memberships.
+	RefreshUserPresence(ctx context.Context, userID string) error
 }
 
 // RealtimeSubscriber provides transport-level invalidation signals without
