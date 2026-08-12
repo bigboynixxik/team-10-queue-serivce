@@ -58,6 +58,8 @@ tags:
     description: Публичные показатели спроса на товар
   - name: me
     description: Очереди текущего пользователя
+  - name: seller
+    description: Аналитика и метрики для продавцов
   - name: infra
     description: Инфраструктурный контроль работоспособности
 
@@ -748,6 +750,35 @@ paths:
               example:
                 status: SOLD_OUT
 
+  /seller/products/{product_id}/metrics:
+    get:
+      tags: [seller]
+      operationId: getProductMetrics
+      summary: Показатели аналитики для продавца
+      description: >
+        Отдельная конечная точка для предоставления исторической аналитики продавцам.
+        Позволяет оценить уровень спроса, конверсию выданных прав, количество отказов
+        (включая исчерпание товара и упущенную выгоду), а также временные метрики поведения
+        покупателей.
+
+
+        Аутентификация продавца вынесена за пределы кейса MVP, поэтому
+        конечная точка доступна без проверки токена (security: []).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Агрегированные аналитические метрики по товару
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductMetrics'
+        '404':
+          description: >
+            Товар сервису неизвестен: очередь по нему ни разу не создавалась,
+            локальное состояние отсутствует.
+
   /healthz:
     get:
       tags: [infra]
@@ -960,6 +991,53 @@ components:
           type: string
           enum: [SOLD_OUT]
 
+    ProductMetrics:
+      type: object
+      description: >
+        Агрегированные аналитические показатели по товару для дашборда продавца.
+      required:
+        - total_stock
+        - total_contenders
+        - used_rights_count
+        - expired_rights_count
+        - soldout_count
+        - dropoff_count
+        - avg_payment_time
+        - avg_dropoff_time
+      properties:
+        total_stock:
+          type: integer
+          description: Исходное количество товара, заявленное к продаже.
+        total_contenders:
+          type: integer
+          description: Общее число уникальных пользователей, попытавшихся приобрести товар (нажавших кнопку покупки).
+        used_rights_count:
+          type: integer
+          description: Количество прав на покупку, по которым была успешно завершена оплата.
+        expired_rights_count:
+          type: integer
+          description: Количество прав, выданных пользователям, но не оплаченных до истечения срока.
+        soldout_count:
+          type: integer
+          description: Количество пользователей, до которых дошла очередь, но физический остаток товара оказался равен нулю.
+        dropoff_count:
+          type: integer
+          description: Количество пользователей, покинувших очередь до получения права на покупку.
+        avg_payment_time:
+          type: integer
+          description: Среднее время (в секундах), затраченное пользователями на ввод платежных данных.
+        avg_dropoff_time:
+          type: integer
+          description: Среднее время (в секундах), проведенное в очереди пользователями до добровольного отказа.
+      example:
+        total_stock: 10
+        total_contenders: 200
+        used_rights_count: 8
+        expired_rights_count: 2
+        soldout_count: 145
+        dropoff_count: 45
+        avg_payment_time: 75
+        avg_dropoff_time: 120
     QueueLimitReached:
       type: object
       description: >
