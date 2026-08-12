@@ -19,7 +19,9 @@ func writeJSON(w http.ResponseWriter, r *http.Request, code int, body any) {
 }
 
 // writeError maps a domain error onto an HTTP status code. Bodies are empty
-// except for SOLD_OUT, which the contract defines as a status-carrying 409.
+// except for SOLD_OUT, which the contract defines as a status-carrying 409, and
+// for the queue limit, which shares that 409 and would otherwise be
+// indistinguishable from it.
 //
 // The three token errors collapse into one 404 on purpose: "expired", "used" and
 // "never existed" are the same answer to the caller — this right cannot be used —
@@ -35,7 +37,7 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, models.ErrForbidden):
 		status = http.StatusForbidden
 	case errors.Is(err, models.ErrNoPendingOffer), errors.Is(err, models.ErrInvalidStatus),
-		errors.Is(err, models.ErrConcurrentJoin):
+		errors.Is(err, models.ErrConcurrentJoin), errors.Is(err, models.ErrQueueLimitReached):
 		status = http.StatusConflict
 	case errors.Is(err, models.ErrStockDepleted):
 		status = http.StatusConflict
@@ -56,6 +58,16 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 
 	if errors.Is(err, models.ErrStockDepleted) {
 		writeJSON(w, r, status, membershipResponse{Status: models.MembershipStatusSoldOut})
+		return
+	}
+
+	var limitErr *models.QueueLimitError
+	if errors.As(err, &limitErr) {
+		writeJSON(w, r, status, queueLimitResponse{
+			Error: queueLimitReachedCode,
+			Limit: limitErr.Limit,
+		})
+
 		return
 	}
 
