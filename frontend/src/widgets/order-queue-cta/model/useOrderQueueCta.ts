@@ -64,6 +64,8 @@ export const useOrderQueueCta = (product: Product) => {
     goHome: () => navigate(appPath()),
   });
 
+  const showJoinHints = offeredQuantity === undefined && !isQueued && !isPayable && !isSoldOut;
+
   return {
     productId: product.id,
     isQueued,
@@ -80,6 +82,7 @@ export const useOrderQueueCta = (product: Product) => {
     decrease,
     action,
     showLeave: isQueued || isPayable,
+    showJoinHints,
     isLoading: isPending || isJoining || isPaying,
   };
 };

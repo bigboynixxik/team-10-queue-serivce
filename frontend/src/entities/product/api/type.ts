@@ -8,10 +8,9 @@ export const ProductSchema = z.object({
   image: z
     .string()
     .min(1)
-    .refine(
-      (value) => value.startsWith('/') || z.string().url().safeParse(value).success,
-      { message: 'Invalid image url' },
-    ),
+    .refine((value) => value.startsWith('/') || z.string().url().safeParse(value).success, {
+      message: 'Invalid image url',
+    }),
 });
 
 export const ProductsSchema = z.array(ProductSchema);

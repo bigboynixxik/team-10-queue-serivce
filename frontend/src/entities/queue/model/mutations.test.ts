@@ -64,4 +64,3 @@ describe('queueMutations', () => {
     expect(invalidateQueries).toHaveBeenCalledTimes(4);
   });
 });
-

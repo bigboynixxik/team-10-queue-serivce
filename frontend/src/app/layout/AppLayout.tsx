@@ -11,8 +11,9 @@ const bem = cn('AppLayout');
 
 export const AppLayout = (): React.JSX.Element => {
   const userId = useUserStore.use.userId();
+  const role = useUserStore.use.role();
 
-  useMyQueuesLiveUpdates(userId);
+  useMyQueuesLiveUpdates(role === 'buyer' ? userId : '');
 
   return (
     <div className={styles[bem()]} data-user-id={userId}>

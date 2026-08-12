@@ -5,6 +5,7 @@ import { cn } from '@shared/lib';
 import { Alert, Button, Spinner } from '@ui';
 import { OrderQueueCta } from '@widgets/order-queue-cta';
 import { ProductCatalog } from '@widgets/product-catalog';
+import { SellerProductStats } from '@widgets/seller-product-stats';
 
 import { useOrderInfoPage } from '../model/useOrderInfoPage';
 import styles from './OrderInfoPage.module.css';
@@ -13,7 +14,7 @@ const bem = cn('OrderInfoPage');
 
 export const OrderInfoPage = (): React.JSX.Element => {
   const navigate = useNavigate();
-  const { product, isPending, isError } = useOrderInfoPage();
+  const { product, isSeller, isPending, isError } = useOrderInfoPage();
 
   if (isPending) {
     return (
@@ -41,7 +42,11 @@ export const OrderInfoPage = (): React.JSX.Element => {
         <h1 className={styles[bem('title')]}>{product.title}</h1>
         <p className={styles[bem('price')]}>{product.price.toLocaleString('ru-RU')} ₽</p>
         <p className={styles[bem('description')]}>{product.description}</p>
-        <OrderQueueCta product={product} />
+        {isSeller ? (
+          <SellerProductStats productId={product.id} />
+        ) : (
+          <OrderQueueCta product={product} />
+        )}
       </section>
       <section className={styles[bem('others')]}>
         <h2 className={styles[bem('others-title')]}>Другие товары</h2>

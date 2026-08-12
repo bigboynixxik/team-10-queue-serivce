@@ -16,6 +16,22 @@
   height: auto;
 }
 
+.Header__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.Header__seller-link {
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.Header__seller-link:hover {
+  color: var(--brand);
+}
+
 @media (max-width: 760px) {
   .Header {
     top: 16px;
@@ -24,5 +40,9 @@
 
   .Header__logo {
     width: 146px;
+  }
+
+  .Header__actions {
+    gap: 8px;
   }
 }

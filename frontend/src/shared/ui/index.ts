@@ -4,6 +4,8 @@ export { Button } from './button/Button';
 export { Card } from './card/Card';
 export { type DescriptionItem, DescriptionList } from './description-list/DescriptionList';
 export { Heading } from './heading/Heading';
+export { Modal } from './modal/Modal';
+export { useModal } from './modal/useModal';
 export { NumberInput } from './number-input/NumberInput';
 export { QuantityStepper } from './quantity-stepper/QuantityStepper';
 export { Spinner } from './spinner/Spinner';
