@@ -15,4 +15,3 @@ describe('membershipRefetchInterval', () => {
     expect(membershipRefetchInterval(undefined)).toBe(false);
   });
 });
-

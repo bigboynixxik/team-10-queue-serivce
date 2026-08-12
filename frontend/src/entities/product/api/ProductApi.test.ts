@@ -22,6 +22,13 @@ describe('ProductApi', () => {
     expect(product.title).toContain('Sennheiser');
   });
 
+  test('lists seller products from fixture', async () => {
+    const products = await productApi.listMine();
+
+    expect(products.length).toBeGreaterThan(0);
+    expect(products[0]?.id).toEqual(expect.any(String));
+  });
+
   test('throws NotFoundError for missing product', async () => {
     await expect(productApi.byId('missing-product')).rejects.toMatchObject({
       code: 404,

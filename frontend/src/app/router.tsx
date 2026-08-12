@@ -16,6 +16,12 @@ const OrderInfoPage = lazy(() =>
   import('@pages/order-info').then(({ OrderInfoPage }) => ({ default: OrderInfoPage })),
 );
 
+const SellerProductsPage = lazy(() =>
+  import('@pages/seller-products').then(({ SellerProductsPage }) => ({
+    default: SellerProductsPage,
+  })),
+);
+
 export const router = createBrowserRouter([
   {
     path: '/',
@@ -35,6 +41,10 @@ export const router = createBrowserRouter([
       {
         path: 'order-info/:productId',
         element: <OrderInfoPage />,
+      },
+      {
+        path: 'seller/products',
+        element: <SellerProductsPage />,
       },
       {
         path: 'queue/:productId',

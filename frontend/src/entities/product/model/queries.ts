@@ -6,6 +6,8 @@ import { productApi } from '../api/ProductApi';
 
 export const productListQueryKey = () => ['products', 'list'] as const;
 
+export const productMineQueryKey = () => ['products', 'mine'] as const;
+
 export const productQueryKey = (id: string) => ['products', 'detail', id] as const;
 
 export const productQueries = {
@@ -13,6 +15,12 @@ export const productQueries = {
     queryOptions({
       queryKey: productListQueryKey(),
       queryFn: () => productApi.list(),
+      staleTime: APP_STALE_TIME,
+    }),
+  mine: () =>
+    queryOptions({
+      queryKey: productMineQueryKey(),
+      queryFn: () => productApi.listMine(),
       staleTime: APP_STALE_TIME,
     }),
   byId: (id: string) =>

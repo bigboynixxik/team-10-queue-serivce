@@ -2,8 +2,7 @@ import { readEnv, readEnvNumber } from './utils';
 
 export const API_BASE_URL = readEnv(import.meta.env.PUBLIC_API_BASE_URL, '');
 
-const isLoopbackHost = (host: string): boolean =>
-  host === 'localhost' || host === '127.0.0.1';
+const isLoopbackHost = (host: string): boolean => host === 'localhost' || host === '127.0.0.1';
 
 const resolveCheckoutBaseUrl = (): string => {
   const configured = readEnv(import.meta.env.PUBLIC_CHECKOUT_BASE_URL, '');
@@ -20,6 +19,11 @@ export const CHECKOUT_BASE_URL = resolveCheckoutBaseUrl();
 export const USER_ID_STORAGE_KEY = readEnv(
   import.meta.env.PUBLIC_USER_ID_STORAGE_KEY,
   'queue-service:user-id',
+);
+
+export const USER_ROLE_STORAGE_KEY = readEnv(
+  import.meta.env.PUBLIC_USER_ROLE_STORAGE_KEY,
+  'queue-service:user-role',
 );
 
 export const APP_BASENAME = '/avito';

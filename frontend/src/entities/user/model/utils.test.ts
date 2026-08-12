@@ -4,8 +4,7 @@ import { USER_ID_STORAGE_KEY } from '@shared/config';
 
 import { createUserId } from './utils';
 
-const UUID_V4_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 describe('createUserId', () => {
   beforeEach(() => {

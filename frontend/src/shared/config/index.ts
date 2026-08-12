@@ -5,4 +5,5 @@ export {
   appPath,
   CHECKOUT_BASE_URL,
   USER_ID_STORAGE_KEY,
+  USER_ROLE_STORAGE_KEY,
 } from './env';

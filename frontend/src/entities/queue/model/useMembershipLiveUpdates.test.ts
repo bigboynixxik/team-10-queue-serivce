@@ -107,4 +107,3 @@ describe('useMembershipLiveUpdates', () => {
     expect(disconnect).toHaveBeenCalled();
   });
 });
-

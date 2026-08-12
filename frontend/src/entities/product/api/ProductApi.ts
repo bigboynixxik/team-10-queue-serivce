@@ -10,6 +10,10 @@ class ProductApi {
     return this.products;
   }
 
+  public async listMine(): Promise<Product[]> {
+    return this.products;
+  }
+
   public async byId(id: string): Promise<Product> {
     const product = this.products.find((candidate) => candidate.id === id);
 
