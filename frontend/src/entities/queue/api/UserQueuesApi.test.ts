@@ -34,7 +34,6 @@ describe('UserQueuesApi', () => {
     expect(axiosMock.get).toHaveBeenCalledWith('', undefined);
   });
 
-
   test('getAll accepts empty list and rejects invalid items', async () => {
     axiosMock.get.mockResolvedValueOnce({ data: [] });
     await expect(userQueuesApi.getAll()).resolves.toEqual([]);

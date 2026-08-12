@@ -77,6 +77,10 @@ type Config struct {
 
 	// AvgPaymentTime is the estimated duration a single user takes to complete a purchase.
 	AvgPaymentTime time.Duration `env:"AVG_PAYMENT_TIME" envDefault:"75s"`
+
+	// MaxActiveQueues bounds how many queues one user may occupy at once. Only
+	// non-terminal memberships count, so a finished queue frees the slot.
+	MaxActiveQueues int `env:"MAX_ACTIVE_QUEUES" envDefault:"5"`
 }
 
 // Load reads the configuration from the .env file and environment variables.
@@ -119,6 +123,9 @@ func (c Config) validate() error {
 	}
 	if c.StockOutboxMaxBackoff <= 0 {
 		return fmt.Errorf("STOCK_OUTBOX_MAX_BACKOFF must be positive")
+	}
+	if c.MaxActiveQueues <= 0 {
+		return fmt.Errorf("MAX_ACTIVE_QUEUES must be positive")
 	}
 
 	return nil

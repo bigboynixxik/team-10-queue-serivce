@@ -5,6 +5,7 @@ import { cn } from '@shared/lib';
 import { useOrderQueueCta } from '../model/useOrderQueueCta';
 import styles from './OrderQueueCta.module.css';
 import { QueueCtaActions } from './QueueCtaActions';
+import { QueueJoinHints } from './QueueJoinHints';
 import { QueueStatusInfo } from './QueueStatusInfo';
 
 const bem = cn('OrderQueueCta');
@@ -30,6 +31,7 @@ export const OrderQueueCta = ({ product }: Props): React.JSX.Element => {
     decrease,
     action,
     showLeave,
+    showJoinHints,
     isLoading,
   } = useOrderQueueCta(product);
 
@@ -43,6 +45,7 @@ export const OrderQueueCta = ({ product }: Props): React.JSX.Element => {
         position={queue?.position}
         secondsLeft={secondsLeft}
       />
+      {showJoinHints && <QueueJoinHints />}
       {offeredQuantity === undefined ? (
         <QueueCtaActions
           action={action}

@@ -1,0 +1,23 @@
+.RoleSelector {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.RoleSelector__label {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.RoleSelector__control {
+  min-width: 140px;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}

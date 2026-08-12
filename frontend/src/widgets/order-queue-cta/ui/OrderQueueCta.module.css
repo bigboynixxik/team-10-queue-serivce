@@ -25,6 +25,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+.OrderQueueCta__hints {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .OrderQueueCta__actions {
   display: flex;
   align-items: center;

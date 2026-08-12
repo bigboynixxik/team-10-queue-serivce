@@ -47,7 +47,6 @@ describe('queueQueries', () => {
     await expect(queueQueries.me('p1').queryFn?.({} as never)).resolves.toBeNull();
   });
 
-
   test('stats enabled only with productId', async () => {
     getStats.mockResolvedValue({ product_count: 1 });
     expect(queueQueries.stats('').enabled).toBe(false);
