@@ -94,6 +94,7 @@ func run() error {
 		cfg.AvgPaymentTime,
 		cfg.RightHeartbeatTimeout,
 		service.WithStockOutbox(cfg.StockOutboxLease, cfg.StockOutboxBatchSize, cfg.StockOutboxMaxBackoff),
+		service.WithMaxActiveQueues(cfg.MaxActiveQueues),
 	)
 
 	if err := queueService.RecoverCache(ctx); err != nil {

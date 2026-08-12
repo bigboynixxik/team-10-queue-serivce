@@ -119,6 +119,18 @@ func newRightResponse(r *models.Right) membershipResponse {
 	}
 }
 
+// queueLimitReachedCode identifies the refusal in the body, since the queue
+// limit and SOLD_OUT share the same 409 status.
+const queueLimitReachedCode = "queue_limit_reached"
+
+// queueLimitResponse is the body of a 409 caused by the per-user queue limit.
+// The limit itself is included so the client can state it without knowing the
+// server configuration.
+type queueLimitResponse struct {
+	Error string `json:"error"`
+	Limit int    `json:"limit"`
+}
+
 // statsResponse is the body of GET /api/v1/queue/{product_id}/stats. All fields
 // are always present — a zero is meaningful here, unlike in membershipResponse
 // where an absent field means "not applicable to this status".

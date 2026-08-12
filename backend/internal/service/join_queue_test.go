@@ -91,6 +91,7 @@ func (s *QueueServiceTestSuite) TestJoinQueue_AvitoError() {
 	s.mockCache.EXPECT().ReleaseMembershipClaim(
 		gomock.Any(), "prod-1", "user-1", gomock.Any(),
 	).Return(nil)
+	s.expectFreshQueueSlot("prod-1", "user-1")
 	expectedErr := errors.New("avito client error")
 	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(0, expectedErr)
 
@@ -212,6 +213,7 @@ func (s *QueueServiceTestSuite) TestJoinQueue_InitStockErrorIsReturned() {
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
 		Return(nil, models.ErrTokenNotFound).Times(2)
 	s.expectMembershipClaim("prod-1", "user-1")
+	s.expectFreshQueueSlot("prod-1", "user-1")
 	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(10, nil)
 	cacheErr := errors.New("redis unavailable")
 	s.mockCache.EXPECT().InitStock(s.ctx, "prod-1", 10).Return(cacheErr)
@@ -227,6 +229,7 @@ func (s *QueueServiceTestSuite) TestJoinQueue_SaveInitialStockErrorIsReturned() 
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").
 		Return(nil, models.ErrTokenNotFound).Times(2)
 	s.expectMembershipClaim("prod-1", "user-1")
+	s.expectFreshQueueSlot("prod-1", "user-1")
 	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(10, nil)
 	s.mockCache.EXPECT().InitStock(s.ctx, "prod-1", 10).Return(nil)
 	dbErr := errors.New("postgres unavailable")

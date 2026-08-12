@@ -33,6 +33,18 @@ const (
 	MembershipStatusSoldOut      MembershipStatus = "SOLD_OUT"
 )
 
+// IsTerminal reports whether the membership can no longer change on its own.
+// A terminal membership holds nothing and waits for nothing, so it no longer
+// counts against the per-user queue limit.
+func (s MembershipStatus) IsTerminal() bool {
+	switch s {
+	case MembershipStatusDeclined, MembershipStatusPurchased, MembershipStatusSoldOut:
+		return true
+	default:
+		return false
+	}
+}
+
 // Valid checks if the MembershipStatus contains a recognized value.
 func (s MembershipStatus) Valid() error {
 	switch s {
