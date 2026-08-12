@@ -27,6 +27,7 @@ type QueueService struct {
 	stockOutboxLease      time.Duration
 	stockOutboxBatchSize  int
 	stockOutboxMaxBackoff time.Duration
+	maxActiveQueues       int
 }
 
 // Option tweaks QueueService runtime settings that do not belong to the core
@@ -44,6 +45,15 @@ func WithStockOutbox(lease time.Duration, batchSize int, maxBackoff time.Duratio
 		}
 		if maxBackoff > 0 {
 			s.stockOutboxMaxBackoff = maxBackoff
+		}
+	}
+}
+
+// WithMaxActiveQueues bounds how many queues one user may occupy at once.
+func WithMaxActiveQueues(limit int) Option {
+	return func(s *QueueService) {
+		if limit > 0 {
+			s.maxActiveQueues = limit
 		}
 	}
 }
@@ -70,6 +80,7 @@ func NewQueueService(
 		stockOutboxLease:      defaultStockOutboxLease,
 		stockOutboxBatchSize:  defaultStockOutboxBatchSize,
 		stockOutboxMaxBackoff: defaultStockOutboxMaxBackoff,
+		maxActiveQueues:       defaultMaxActiveQueues,
 	}
 
 	for _, option := range options {
@@ -83,6 +94,11 @@ func NewQueueService(
 // has to outlive a normal call; a crashed process releases the user by expiry
 // rather than locking them out.
 const membershipClaimTTL = 30 * time.Second
+
+// defaultMaxActiveQueues is the fallback when the limit is not configured. A
+// buyer chasing scarce goods tracks a handful of items at once; an order of
+// magnitude more is automation, not shopping.
+const defaultMaxActiveQueues = 5
 
 // joinAwaitAttempts and joinAwaitDelay define how long a losing request waits for
 // the winner to finish.
@@ -164,6 +180,35 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 		return mem, right, nil
 	}
 
+	// The slot is taken before anything else happens, so a refused join never
+	// reaches AvitoBackend and never touches stock. It is checked here rather
+	// than at the very start because the idempotency checks above may return an
+	// existing membership, and those must not depend on the limit at all.
+	granted, freshSlot, errSlot := s.cache.TryOccupyQueueSlot(
+		ctx, userID, productID, s.maxActiveQueues,
+	)
+	if errSlot != nil {
+		return nil, nil, fmt.Errorf("service.JoinQueue occupy queue slot: %w", errSlot)
+	}
+	if !granted {
+		return nil, nil, &models.QueueLimitError{Limit: s.maxActiveQueues}
+	}
+
+	// A slot taken here is only justified once a membership exists. Everything
+	// below can fail, so an unfinished entry gives it back rather than spending
+	// one of the user's slots on a queue they never joined.
+	joined := false
+	defer func() {
+		if joined || !freshSlot {
+			return
+		}
+		if errRelease := s.cache.ReleaseQueueSlot(
+			context.WithoutCancel(ctx), userID, productID,
+		); errRelease != nil {
+			log.WarnContext(ctx, "failed to release queue slot", slog.Any("error", errRelease))
+		}
+	}()
+
 	totalStock, err := s.avito.GetInitialStock(ctx, productID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("service.JoinQueue fetch initial stock: %w", err)
@@ -199,6 +244,10 @@ func (s *QueueService) JoinQueue(ctx context.Context, productID, userID string, 
 	if errProcess != nil {
 		return nil, nil, errProcess
 	}
+
+	// processAllocation has persisted the membership, so the slot now belongs to
+	// it: a SOLD_OUT outcome released it again, any other status keeps it.
+	joined = true
 
 	return newMem, allocatedRight, nil
 }

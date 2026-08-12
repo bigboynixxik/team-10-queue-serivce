@@ -343,6 +343,21 @@ func (mr *MockCacheRepoMockRecorder) CommitPurchase(ctx, productID, quantity any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CommitPurchase", reflect.TypeOf((*MockCacheRepo)(nil).CommitPurchase), ctx, productID, quantity)
 }
 
+// CountQueueSlots mocks base method.
+func (m *MockCacheRepo) CountQueueSlots(ctx context.Context, userID string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountQueueSlots", ctx, userID)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountQueueSlots indicates an expected call of CountQueueSlots.
+func (mr *MockCacheRepoMockRecorder) CountQueueSlots(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountQueueSlots", reflect.TypeOf((*MockCacheRepo)(nil).CountQueueSlots), ctx, userID)
+}
+
 // Enqueue mocks base method.
 func (m *MockCacheRepo) Enqueue(ctx context.Context, productID, userID string) error {
 	m.ctrl.T.Helper()
@@ -585,6 +600,20 @@ func (mr *MockCacheRepoMockRecorder) ReleaseMembershipClaim(ctx, productID, user
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseMembershipClaim", reflect.TypeOf((*MockCacheRepo)(nil).ReleaseMembershipClaim), ctx, productID, userID, ownerID)
 }
 
+// ReleaseQueueSlot mocks base method.
+func (m *MockCacheRepo) ReleaseQueueSlot(ctx context.Context, userID, productID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseQueueSlot", ctx, userID, productID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleaseQueueSlot indicates an expected call of ReleaseQueueSlot.
+func (mr *MockCacheRepoMockRecorder) ReleaseQueueSlot(ctx, userID, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseQueueSlot", reflect.TypeOf((*MockCacheRepo)(nil).ReleaseQueueSlot), ctx, userID, productID)
+}
+
 // RemoveFromExpiryTimer mocks base method.
 func (m *MockCacheRepo) RemoveFromExpiryTimer(ctx context.Context, productID, userID string) error {
 	m.ctrl.T.Helper()
@@ -639,6 +668,20 @@ func (m *MockCacheRepo) ResetExpiryTimers(ctx context.Context) error {
 func (mr *MockCacheRepoMockRecorder) ResetExpiryTimers(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetExpiryTimers", reflect.TypeOf((*MockCacheRepo)(nil).ResetExpiryTimers), ctx)
+}
+
+// ResetQueueSlots mocks base method.
+func (m *MockCacheRepo) ResetQueueSlots(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResetQueueSlots", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResetQueueSlots indicates an expected call of ResetQueueSlots.
+func (mr *MockCacheRepoMockRecorder) ResetQueueSlots(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetQueueSlots", reflect.TypeOf((*MockCacheRepo)(nil).ResetQueueSlots), ctx)
 }
 
 // RestoreAvailableUnits mocks base method.
@@ -726,6 +769,22 @@ func (m *MockCacheRepo) TryAllocate(ctx context.Context, productID string, quant
 func (mr *MockCacheRepoMockRecorder) TryAllocate(ctx, productID, quantity any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TryAllocate", reflect.TypeOf((*MockCacheRepo)(nil).TryAllocate), ctx, productID, quantity)
+}
+
+// TryOccupyQueueSlot mocks base method.
+func (m *MockCacheRepo) TryOccupyQueueSlot(ctx context.Context, userID, productID string, limit int) (bool, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TryOccupyQueueSlot", ctx, userID, productID, limit)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// TryOccupyQueueSlot indicates an expected call of TryOccupyQueueSlot.
+func (mr *MockCacheRepoMockRecorder) TryOccupyQueueSlot(ctx, userID, productID, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TryOccupyQueueSlot", reflect.TypeOf((*MockCacheRepo)(nil).TryOccupyQueueSlot), ctx, userID, productID, limit)
 }
 
 // MockAvitoClient is a mock of AvitoClient interface.

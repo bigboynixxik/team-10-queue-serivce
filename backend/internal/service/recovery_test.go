@@ -38,6 +38,7 @@ func (s *QueueServiceTestSuite) TestRecoverCache_RestoresDurableState() {
 	s.mockCache.EXPECT().ResetExpiryTimers(s.ctx).Return(nil)
 	s.mockCache.EXPECT().AddToExpiryTimer(s.ctx, "prod-1", "queued-1", gomock.Any()).Return(nil)
 	s.mockCache.EXPECT().AddToExpiryTimer(s.ctx, "prod-1", "queued-2", gomock.Any()).Return(nil)
+	s.mockCache.EXPECT().ResetQueueSlots(s.ctx).Return(nil)
 	s.mockCache.EXPECT().
 		RestoreProductState(s.ctx, "prod-1", 10, 5, []string{"queued-1", "queued-2"}).
 		Return(nil)
@@ -71,6 +72,7 @@ func (s *QueueServiceTestSuite) TestRecoverCache_ClampsNegativeAvailableUnits() 
 
 	s.mockDurable.EXPECT().LoadRecoverySnapshot(s.ctx).Return(snapshot, nil)
 	s.mockCache.EXPECT().ResetExpiryTimers(s.ctx).Return(nil)
+	s.mockCache.EXPECT().ResetQueueSlots(s.ctx).Return(nil)
 	s.mockCache.EXPECT().RestoreProductState(s.ctx, "prod-1", 1, 0, gomock.Any()).Return(nil)
 	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, gomock.Any()).Return(nil)
@@ -96,6 +98,7 @@ func (s *QueueServiceTestSuite) TestRecoverCache_ExpiresOrphanActiveRight() {
 	s.mockDurable.EXPECT().LoadRecoverySnapshot(s.ctx).Return(snapshot, nil)
 	s.mockDurable.EXPECT().ExpireRights(s.ctx, []string{"orphan-token"}).Return(nil)
 	s.mockCache.EXPECT().ResetExpiryTimers(s.ctx).Return(nil)
+	s.mockCache.EXPECT().ResetQueueSlots(s.ctx).Return(nil)
 	s.mockCache.EXPECT().RestoreProductState(s.ctx, "prod-1", 3, 3, gomock.Any()).Return(nil)
 	s.mockCache.EXPECT().SetRight(s.ctx, gomock.Cond(func(right *models.Right) bool {
 		return right.Token == "orphan-token" && right.Status == models.RightStatusExpired
@@ -128,6 +131,7 @@ func (s *QueueServiceTestSuite) TestRecoverCache_SettlesMembershipWithoutUsableR
 		return m.Status == models.MembershipStatusDeclined && m.CurrentToken == nil && m.ExpiresAt == nil
 	})).Return(nil)
 	s.mockCache.EXPECT().ResetExpiryTimers(s.ctx).Return(nil)
+	s.mockCache.EXPECT().ResetQueueSlots(s.ctx).Return(nil)
 	// The membership holds nothing any more, so all two units stay available.
 	s.mockCache.EXPECT().RestoreProductState(s.ctx, "prod-1", 2, 2, gomock.Any()).Return(nil)
 	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
@@ -148,6 +152,7 @@ func (s *QueueServiceTestSuite) TestRecoverCache_FailsOnStoreError() {
 
 	s.mockDurable.EXPECT().LoadRecoverySnapshot(s.ctx).Return(snapshot, nil)
 	s.mockCache.EXPECT().ResetExpiryTimers(s.ctx).Return(nil)
+	s.mockCache.EXPECT().ResetQueueSlots(s.ctx).Return(nil)
 	s.mockCache.EXPECT().RestoreProductState(s.ctx, "prod-1", 1, 1, gomock.Any()).Return(errors.New("redis down"))
 
 	s.Require().Error(s.srv.RecoverCache(s.ctx))

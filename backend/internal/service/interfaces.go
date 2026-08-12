@@ -166,6 +166,22 @@ type CacheRepo interface {
 	// ResetExpiryTimers clears only expiration worker indexes before recovery recreates them.
 	ResetExpiryTimers(ctx context.Context) error
 
+	// TryOccupyQueueSlot reserves one of the user's active queue slots. It reports
+	// whether the slot was granted and whether it was freshly taken; only a fresh
+	// slot may be released on a failed join.
+	TryOccupyQueueSlot(
+		ctx context.Context, userID string, productID string, limit int,
+	) (granted bool, fresh bool, err error)
+
+	// ReleaseQueueSlot returns a slot taken by an entry that did not complete.
+	ReleaseQueueSlot(ctx context.Context, userID string, productID string) error
+
+	// CountQueueSlots reports how many queues the user currently occupies.
+	CountQueueSlots(ctx context.Context, userID string) (int, error)
+
+	// ResetQueueSlots drops every per-user slot set before recovery rebuilds them.
+	ResetQueueSlots(ctx context.Context) error
+
 	// GetQueueMetrics retrieves the user's 0-indexed rank in the queue and the currently available stock.
 	// It uses a pipeline to minimize network round-trips for real-time ETA calculation.
 	GetQueueMetrics(ctx context.Context, productID string, userID string) (rank int, availableUnits int, err error)
