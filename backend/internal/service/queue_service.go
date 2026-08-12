@@ -23,7 +23,7 @@ type QueueService struct {
 	offerTTL              time.Duration
 	paymentTTL            time.Duration
 	avgPaymentTime        time.Duration
-	heartbeatTimeout      time.Duration
+	presenceTimeout       time.Duration
 	stockOutboxLease      time.Duration
 	stockOutboxBatchSize  int
 	stockOutboxMaxBackoff time.Duration
@@ -56,7 +56,7 @@ func NewQueueService(
 	offerTTL time.Duration,
 	paymentTTL time.Duration,
 	avgPaymentTime time.Duration,
-	heartbeatTimeout time.Duration,
+	presenceTimeout time.Duration,
 	options ...Option,
 ) *QueueService {
 	s := &QueueService{
@@ -66,7 +66,7 @@ func NewQueueService(
 		offerTTL:              offerTTL,
 		paymentTTL:            paymentTTL,
 		avgPaymentTime:        avgPaymentTime,
-		heartbeatTimeout:      heartbeatTimeout,
+		presenceTimeout:       presenceTimeout,
 		stockOutboxLease:      defaultStockOutboxLease,
 		stockOutboxBatchSize:  defaultStockOutboxBatchSize,
 		stockOutboxMaxBackoff: defaultStockOutboxMaxBackoff,
@@ -590,10 +590,10 @@ func (s *QueueService) syncCacheState(ctx context.Context, mem *models.QueueMemb
 			return fmt.Errorf("cache right: %w", err)
 		}
 	}
-	if mem.ExpiresAt != nil {
-		expiryDeadline := *mem.ExpiresAt
-		if mem.Status == models.MembershipStatusRightActive {
-			expiryDeadline = s.rightHeartbeatDeadline(time.Now().UTC(), expiryDeadline)
+	if mem.Status == models.MembershipStatusQueued || mem.ExpiresAt != nil {
+		expiryDeadline := time.Now().UTC().Add(s.presenceTimeout)
+		if mem.ExpiresAt != nil {
+			expiryDeadline = *mem.ExpiresAt
 		}
 		if err := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, expiryDeadline); err != nil {
 			return fmt.Errorf("add expiry timer: %w", err)

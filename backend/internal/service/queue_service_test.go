@@ -76,9 +76,15 @@ func (s *QueueServiceTestSuite) mockSyncCacheState(status models.MembershipStatu
 		s.mockCache.EXPECT().SetRight(s.ctx, gomock.Any()).Return(nil)
 	}
 	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
-	if expectTimer {
+	if expectTimer || status == models.MembershipStatusQueued {
 		var timerMatcher gomock.Matcher = gomock.Any()
 		if status == models.MembershipStatusRightActive {
+			earliest := time.Now().UTC().Add(3*time.Minute + 59*time.Second)
+			latest := time.Now().UTC().Add(4*time.Minute + time.Second)
+			timerMatcher = gomock.Cond(func(deadline time.Time) bool {
+				return !deadline.Before(earliest) && !deadline.After(latest)
+			})
+		} else if status == models.MembershipStatusQueued {
 			earliest := time.Now().UTC().Add(29 * time.Second)
 			latest := time.Now().UTC().Add(31 * time.Second)
 			timerMatcher = gomock.Cond(func(deadline time.Time) bool {

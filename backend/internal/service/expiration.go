@@ -130,38 +130,36 @@ func (s *QueueService) handleExpiredKey(
 
 	// The user has already paid or left; the timer refers to a state that no
 	// longer exists.
-	if mem.Status != models.MembershipStatusOfferPending && mem.Status != models.MembershipStatusRightActive {
+	if mem.Status != models.MembershipStatusQueued &&
+		mem.Status != models.MembershipStatusOfferPending &&
+		mem.Status != models.MembershipStatusRightActive {
 		return nil
 	}
-	if mem.ExpiresAt == nil {
+	if mem.Status != models.MembershipStatusQueued && mem.ExpiresAt == nil {
 		return fmt.Errorf("active membership has no expiration: %w", models.ErrInvalidStatus)
 	}
 
 	// A timer is identified by product and user, so an old claimed timer may
 	// survive while the same user enters a newer lifecycle. UpdatedAt belongs to
 	// the current state, while Deadline belongs to the claimed state. A newer
-	// state must never be expired by the older claim. This comparison deliberately
-	// does not use ExpiresAt: RIGHT_ACTIVE may validly expire earlier because its
-	// heartbeat lease ran out.
+	// state must never be expired by the older claim.
 	if claim.Deadline.Before(mem.UpdatedAt) {
-		deadline := *mem.ExpiresAt
-		if mem.Status == models.MembershipStatusRightActive {
-			deadline = s.rightHeartbeatDeadline(now, deadline)
+		deadline := now.Add(s.presenceTimeout)
+		if mem.ExpiresAt != nil {
+			deadline = *mem.ExpiresAt
 		}
 
-		refreshed, errRefresh := s.cache.RefreshExpiryTimer(
-			ctx, productID, userID, deadline,
-		)
-		if errRefresh != nil {
-			return fmt.Errorf("refresh current expiration: %w", errRefresh)
-		}
-		if !refreshed {
-			if errAdd := s.cache.AddToExpiryTimer(ctx, productID, userID, deadline); errAdd != nil {
-				return fmt.Errorf("restore current expiration: %w", errAdd)
-			}
+		// The old generation is already claimed, so the scheduled ZSET has no
+		// entry to refresh. Recreate only the current lifecycle's deadline.
+		if errAdd := s.cache.AddToExpiryTimer(ctx, productID, userID, deadline); errAdd != nil {
+			return fmt.Errorf("restore current expiration: %w", errAdd)
 		}
 
 		return nil
+	}
+
+	if mem.Status == models.MembershipStatusQueued {
+		return s.handleQueuedPresenceExpiry(ctx, mem, now)
 	}
 
 	if mem.Status == models.MembershipStatusRightActive {
@@ -178,6 +176,66 @@ func (s *QueueService) handleExpiredKey(
 	}
 
 	return s.expirePendingOffer(ctx, mem, now)
+}
+
+func (s *QueueService) handleQueuedPresenceExpiry(
+	ctx context.Context, mem *models.QueueMembership, now time.Time,
+) error {
+	presenceOwner := uuid.NewString()
+	presenceWon, errPresenceClaim := s.cache.ClaimMembership(
+		ctx, presenceClaimProduct, mem.UserID, presenceOwner, membershipClaimTTL,
+	)
+	if errPresenceClaim != nil {
+		return fmt.Errorf("claim user presence: %w", errPresenceClaim)
+	}
+	if !presenceWon {
+		return models.ErrConcurrentJoin
+	}
+	defer func() {
+		_ = s.cache.ReleaseMembershipClaim(
+			context.WithoutCancel(ctx), presenceClaimProduct, mem.UserID, presenceOwner,
+		)
+	}()
+
+	presenceDeadline, errPresence := s.cache.GetUserPresenceDeadline(ctx, mem.UserID)
+	if errPresence != nil {
+		return fmt.Errorf("get user presence: %w", errPresence)
+	}
+	if presenceDeadline != nil && now.Before(*presenceDeadline) {
+		if errAdd := s.cache.AddToExpiryTimer(ctx, mem.ProductID, mem.UserID, *presenceDeadline); errAdd != nil {
+			return fmt.Errorf("restore live presence timer: %w", errAdd)
+		}
+		return nil
+	}
+
+	return s.expireQueuedMembership(ctx, mem, now)
+}
+
+// expireQueuedMembership removes a user whose application-wide presence lease
+// elapsed. It does not affect offers or already issued purchase rights.
+func (s *QueueService) expireQueuedMembership(
+	ctx context.Context, mem *models.QueueMembership, now time.Time,
+) error {
+	mem.Status = models.MembershipStatusDeclined
+	mem.UpdatedAt = now
+
+	if err := s.durable.UpsertMembership(ctx, mem); err != nil {
+		return fmt.Errorf("upsert absent queued membership: %w", err)
+	}
+
+	var operationErrors []error
+	if errSync := s.syncCacheState(ctx, mem, nil); errSync != nil {
+		operationErrors = append(operationErrors, fmt.Errorf("sync absent queued membership: %w", errSync))
+	}
+	if errRemove := s.cache.RemoveFromQueue(ctx, mem.ProductID, mem.UserID); errRemove != nil {
+		operationErrors = append(operationErrors, fmt.Errorf("remove absent user from queue: %w", errRemove))
+	}
+
+	if err := errors.Join(operationErrors...); err != nil {
+		return fmt.Errorf("expire queued membership: %w", err)
+	}
+
+	return nil
 }
 
 // expirePendingOffer turns an unanswered offer into the terminal DECLINED and

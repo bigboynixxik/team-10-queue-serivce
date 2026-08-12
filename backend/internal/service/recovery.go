@@ -308,6 +308,11 @@ func (s *QueueService) applyRecoveryMembership(
 	switch membership.Status {
 	case models.MembershipStatusQueued:
 		product.queuedUsers = append(product.queuedUsers, membership.UserID)
+		return recoveryTimer{
+			productID: membership.ProductID,
+			userID:    membership.UserID,
+			deadline:  now,
+		}, true
 	case models.MembershipStatusRightActive:
 		return s.applyRecoveredActiveRight(ctx, membership, product, rightsByToken, activeRights, repairs, now)
 	case models.MembershipStatusOfferPending:
@@ -362,7 +367,7 @@ func (s *QueueService) applyRecoveredActiveRight(
 	return recoveryTimer{
 		productID: membership.ProductID,
 		userID:    membership.UserID,
-		deadline:  s.rightHeartbeatDeadline(now, *membership.ExpiresAt),
+		deadline:  *membership.ExpiresAt,
 	}, true
 }
 

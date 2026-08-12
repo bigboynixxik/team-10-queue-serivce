@@ -82,6 +82,16 @@ type CacheRepo interface {
 	// RemoveFromQueue completely removes a user from the product's queue.
 	RemoveFromQueue(ctx context.Context, productID string, userID string) error
 
+	// ListQueuedProducts returns products where the user is currently waiting.
+	ListQueuedProducts(ctx context.Context, userID string) ([]string, error)
+
+	// SetUserPresenceDeadline records how long the user's application-wide
+	// connection proves presence in every waiting queue.
+	SetUserPresenceDeadline(ctx context.Context, userID string, deadline time.Time) error
+
+	// GetUserPresenceDeadline returns the last confirmed presence deadline.
+	GetUserPresenceDeadline(ctx context.Context, userID string) (*time.Time, error)
+
 	// SetMembership quickly caches the user's current state.
 	SetMembership(ctx context.Context, membership *models.QueueMembership) error
 
@@ -115,8 +125,8 @@ type CacheRepo interface {
 	// AddToExpiryTimer sets up background tracking for a time-bound right or offer.
 	AddToExpiryTimer(ctx context.Context, productID string, userID string, expiresAt time.Time) error
 
-	// RefreshExpiryTimer atomically extends an existing timer without recreating
-	// a timer that the expiration worker has already claimed.
+	// RefreshExpiryTimer atomically extends an existing scheduled timer. It does
+	// not recreate a timer already claimed by the expiration worker.
 	RefreshExpiryTimer(
 		ctx context.Context, productID string, userID string, expiresAt time.Time,
 	) (refreshed bool, err error)
