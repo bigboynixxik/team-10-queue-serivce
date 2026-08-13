@@ -25,8 +25,8 @@ type ProductMetrics struct {
 	DropOffCount int
 
 	// AvgPaymentTime is the average duration users spend completing their payment.
-	AvgPaymentTime time.Duration
+	AvgPaymentTime *time.Duration
 
 	// AvgDropOffTime is the average duration users wait in the queue before leaving voluntarily.
-	AvgDropOffTime time.Duration
+	AvgDropOffTime *time.Duration
 }
