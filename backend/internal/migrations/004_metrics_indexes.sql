@@ -6,4 +6,4 @@ CREATE INDEX idx_queue_memberships_product_status ON queue_memberships (product_
 -- +goose Down
 -- +goose StatementBegin
 DROP INDEX IF EXISTS idx_queue_memberships_product_status;
--- +goose StatementEn
+-- +goose StatementEnd
