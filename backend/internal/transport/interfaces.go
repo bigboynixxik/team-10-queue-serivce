@@ -60,6 +60,10 @@ type QueueService interface {
 	// RefreshUserPresence confirms that the user still has a live application-wide
 	// WebSocket connection and extends only their QUEUED memberships.
 	RefreshUserPresence(ctx context.Context, userID string) error
+
+	// GetProductMetrics aggregates historical and real-time demand data for a product.
+	// It relies exclusively on durable storage to provide analytics for the seller.
+	GetProductMetrics(ctx context.Context, productID string) (*models.ProductMetrics, error)
 }
 
 // RealtimeSubscriber provides transport-level invalidation signals without
