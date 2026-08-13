@@ -32,6 +32,8 @@ var (
 	ErrQueueLimitReached = errors.New("active queue limit reached")
 
 	ErrProductNotFound = errors.New("product not found")
+
+	ErrInvalidRequest = errors.New("invalid request parameters")
 )
 
 // QueueLimitError reports the configured limit alongside the refusal, so the
