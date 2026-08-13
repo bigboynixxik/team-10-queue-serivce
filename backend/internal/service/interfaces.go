@@ -61,6 +61,10 @@ type DurableRepo interface {
 
 	// ListMembershipsByUser returns every queue the user takes part in.
 	ListMembershipsByUser(ctx context.Context, userID string) ([]*models.QueueMembership, error)
+
+	// GetProductMetrics aggregates historical and real-time demand data for a product.
+	// It returns models.ErrProductNotFound if the product_id does not exist in product_stock.
+	GetProductMetrics(ctx context.Context, productID string) (*models.ProductMetrics, error)
 }
 
 // CacheRepo defines the contract for high-speed, concurrency-safe storage (Redis).

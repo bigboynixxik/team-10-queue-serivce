@@ -32,7 +32,9 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var status int
 
 	switch {
-	case errors.Is(err, models.ErrQuantityInvalid), errors.Is(err, models.ErrQuantityExceeded):
+	case errors.Is(err, models.ErrQuantityInvalid),
+		errors.Is(err, models.ErrQuantityExceeded),
+		errors.Is(err, models.ErrInvalidRequest):
 		status = http.StatusBadRequest
 	case errors.Is(err, models.ErrForbidden):
 		status = http.StatusForbidden
@@ -44,7 +46,8 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, models.ErrMembershipNotFound),
 		errors.Is(err, models.ErrTokenNotFound),
 		errors.Is(err, models.ErrTokenExpired),
-		errors.Is(err, models.ErrTokenUsed):
+		errors.Is(err, models.ErrTokenUsed),
+		errors.Is(err, models.ErrProductNotFound):
 		status = http.StatusNotFound
 	default:
 		status = http.StatusInternalServerError

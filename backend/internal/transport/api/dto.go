@@ -155,3 +155,39 @@ func newStatsResponse(s *models.QueueStats) statsResponse {
 		ProductCount: s.ProductCount,
 	}
 }
+
+// productMetricsResponse defines the JSON structure for seller analytics.
+type productMetricsResponse struct {
+	TotalStock         int  `json:"total_stock"`
+	TotalContenders    int  `json:"total_contenders"`
+	UsedRightsCount    int  `json:"used_rights_count"`
+	ExpiredRightsCount int  `json:"expired_rights_count"`
+	SoldOutCount       int  `json:"soldout_count"`
+	DropOffCount       int  `json:"dropoff_count"`
+	AvgPaymentTime     *int `json:"avg_payment_time"`
+	AvgDropOffTime     *int `json:"avg_dropoff_time"`
+}
+
+// newProductMetricsResponse converts the domain model into the transport DTO.
+func newProductMetricsResponse(m *models.ProductMetrics) productMetricsResponse {
+	resp := productMetricsResponse{
+		TotalStock:         m.TotalStock,
+		TotalContenders:    m.TotalContenders,
+		UsedRightsCount:    m.UsedRightsCount,
+		ExpiredRightsCount: m.ExpiredRightsCount,
+		SoldOutCount:       m.SoldOutCount,
+		DropOffCount:       m.DropOffCount,
+	}
+
+	if m.AvgPaymentTime != nil {
+		resp.AvgPaymentTime = new(int)
+		*resp.AvgPaymentTime = int(m.AvgPaymentTime.Seconds())
+	}
+
+	if m.AvgDropOffTime != nil {
+		resp.AvgDropOffTime = new(int)
+		*resp.AvgDropOffTime = int(m.AvgDropOffTime.Seconds())
+	}
+
+	return resp
+}

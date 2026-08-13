@@ -828,3 +828,82 @@ func (dr *DurableRepo) ListMembershipsByUser(ctx context.Context, userID string)
 
 	return memberships, nil
 }
+
+// GetProductMetrics builds a unified analytical report for a single product using a CTE query.
+// It executes a single network round-trip to PostgreSQL, avoiding connection pool exhaustion.
+// If no time-based data is available, it resolves the averages to nil (NULL in DB) rather than zero.
+// Returns models.ErrProductNotFound if the product_id does not exist in the product_stock table.
+func (dr *DurableRepo) GetProductMetrics(ctx context.Context, productID string) (*models.ProductMetrics, error) {
+	query, args, err := dr.sq.Select(
+		"s.total_stock",
+		"COALESCE(qm.total_contenders, 0)",
+		"COALESCE(r.used_rights_count, 0)",
+		"COALESCE(r.expired_rights_count, 0)",
+		"COALESCE(qm.soldout_count, 0)",
+		"COALESCE(qm.dropoff_count, 0)",
+		"r.avg_payment_time",
+		"qm.avg_dropoff_time",
+	).Prefix(`
+		WITH stock AS (
+			SELECT total_stock FROM product_stock WHERE product_id = ?
+		),
+		qm_metrics AS (
+			SELECT 
+				COUNT(qm.id) AS total_contenders,
+				COUNT(qm.id) FILTER (WHERE qm.status = 'SOLD_OUT') AS soldout_count,
+				AVG(EXTRACT(EPOCH FROM (qm.updated_at - qm.created_at))) FILTER (WHERE qm.status = 'DECLINED' AND r.token IS NULL) AS avg_dropoff_time,
+				COUNT(qm.id) FILTER (WHERE qm.status = 'DECLINED' AND r.token IS NULL) AS dropoff_count
+			FROM queue_memberships qm
+			LEFT JOIN rights r ON qm.user_id = r.user_id AND qm.product_id = r.product_id
+			WHERE qm.product_id = ?
+		),
+		rights_metrics AS (
+			SELECT 
+				COUNT(token) FILTER (WHERE status = 'USED') AS used_rights_count,
+				COUNT(token) FILTER (WHERE status = 'EXPIRED') AS expired_rights_count,
+				AVG(EXTRACT(EPOCH FROM (used_at - created_at))) FILTER (WHERE status = 'USED') AS avg_payment_time
+			FROM rights
+			WHERE product_id = ?
+		)
+	`, productID, productID, productID).
+		From("stock s").
+		LeftJoin("qm_metrics qm ON true").
+		LeftJoin("rights_metrics r ON true").
+		ToSql()
+
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.GetProductMetrics query build: %w", err)
+	}
+
+	var metrics models.ProductMetrics
+	var avgPaymentSec, avgDropOffSec *float64
+
+	row := dr.pool.QueryRow(ctx, query, args...)
+	err = row.Scan(
+		&metrics.TotalStock,
+		&metrics.TotalContenders,
+		&metrics.UsedRightsCount,
+		&metrics.ExpiredRightsCount,
+		&metrics.SoldOutCount,
+		&metrics.DropOffCount,
+		&avgPaymentSec,
+		&avgDropOffSec,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, models.ErrProductNotFound
+		}
+		return nil, fmt.Errorf("postgres.DurableRepo.GetProductMetrics scan: %w", err)
+	}
+
+	if avgPaymentSec != nil {
+		metrics.AvgPaymentTime = new(time.Duration(*avgPaymentSec * float64(time.Second)))
+	}
+
+	if avgDropOffSec != nil {
+		metrics.AvgDropOffTime = new(time.Duration(*avgDropOffSec * float64(time.Second)))
+	}
+
+	return &metrics, nil
+}
