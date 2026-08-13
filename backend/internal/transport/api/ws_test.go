@@ -30,6 +30,8 @@ type realtimeQueueServiceStub struct {
 	checkoutToken   string
 	checkoutProduct string
 	checkoutErr     error
+	metricsRes      *models.ProductMetrics
+	metricsErr      error
 }
 
 func (s *realtimeQueueServiceStub) JoinQueue(
@@ -391,4 +393,18 @@ func TestUserQueuesWebSocketRefreshesPresenceAfterPong(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return service.heartbeatCallCount() >= 2
 	}, time.Second, 10*time.Millisecond)
+}
+
+func (s *realtimeQueueServiceStub) GetProductMetrics(
+	_ context.Context,
+	_ string,
+) (*models.ProductMetrics, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.metricsErr != nil {
+		return nil, s.metricsErr
+	}
+
+	return s.metricsRes, nil
 }
