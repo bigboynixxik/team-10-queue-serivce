@@ -2,9 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import { sellerStatsQueries } from '@entities/seller-stat';
 
-import { formatDeficit, formatDuration, formatMoney } from '../lib/formatStats';
+import { deficitCoefficient, formatDuration, formatMoney } from '../lib/formatStats';
 
-export const useSellerProductStats = (productId: string) => {
+export const useSellerProductStats = (productId: string, price: number) => {
   const query = useQuery({
     ...sellerStatsQueries.byProductId(productId),
     enabled: Boolean(productId),
@@ -16,27 +16,30 @@ export const useSellerProductStats = (productId: string) => {
     ? [
         {
           label: 'Коэффициент дефицита',
-          value: formatDeficit(stats.stock, stats.claimants, stats.deficit_coefficient),
+          value: `×${deficitCoefficient(stats.total_stock, stats.total_contenders)}`,
         },
-        { label: 'Потерянная выручка', value: formatMoney(stats.lost_revenue) },
-        { label: 'Цена', value: formatMoney(stats.price) },
-        { label: 'Sold out', value: String(stats.sold_out_count) },
+        {
+          label: 'Потерянная выручка',
+          value: formatMoney(stats.soldout_count * price),
+        },
+        { label: 'Цена', value: formatMoney(price) },
+        { label: 'Sold out', value: String(stats.soldout_count) },
         {
           label: 'Право выдано, не оплачено',
-          value: String(stats.rights_issued_unpaid),
+          value: String(stats.expired_rights_count),
         },
         {
           label: 'Право выдано и оплачено',
-          value: String(stats.rights_issued_paid),
+          value: String(stats.used_rights_count),
         },
         {
           label: 'Время от права до оплаты',
-          value: formatDuration(stats.avg_right_to_payment_seconds),
+          value: formatDuration(stats.avg_payment_time),
         },
-        { label: 'Вышли из очереди', value: String(stats.left_queue_count) },
+        { label: 'Вышли из очереди', value: String(stats.dropoff_count) },
         {
           label: 'Время в очереди до выхода',
-          value: formatDuration(stats.avg_queue_time_before_leave_seconds),
+          value: formatDuration(stats.avg_dropoff_time),
         },
       ]
     : [];
