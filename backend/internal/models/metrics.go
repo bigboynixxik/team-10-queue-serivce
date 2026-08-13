@@ -21,12 +21,12 @@ type ProductMetrics struct {
 	// SoldOutCount is the number of users who reached the front but the stock was 0.
 	SoldOutCount int
 
-	// DropOffCount is the number of users who left the queue voluntarily before getting an offer.
+	// DropOffCount is the number of users whose latest participation ended without a purchase.
 	DropOffCount int
 
 	// AvgPaymentTime is the average duration users spend completing their payment.
 	AvgPaymentTime *time.Duration
 
-	// AvgDropOffTime is the average duration users wait in the queue before leaving voluntarily.
+	// AvgDropOffTime is the average duration of latest participations that ended without a purchase.
 	AvgDropOffTime *time.Duration
 }

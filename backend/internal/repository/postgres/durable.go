@@ -289,6 +289,8 @@ func (dr *DurableRepo) GetRightByToken(ctx context.Context, token string) (*mode
 
 // UpsertMembership creates or updates a user's current status in the queue.
 // It relies on the UNIQUE(product_id, user_id) constraint to resolve conflicts[cite: 36].
+// CreatedAt is carried through transitions within one participation and replaced
+// by JoinQueue when the same user starts a new participation.
 func (dr *DurableRepo) UpsertMembership(ctx context.Context, membership *models.QueueMembership) error {
 	query, args, err := dr.sq.Insert("queue_memberships").
 		Columns("product_id", "user_id", "status", "quantity", "available_quantity", "current_token", "expires_at", "created_at", "updated_at").
@@ -299,6 +301,7 @@ func (dr *DurableRepo) UpsertMembership(ctx context.Context, membership *models.
 			"available_quantity = EXCLUDED.available_quantity, " +
 			"current_token = EXCLUDED.current_token, " +
 			"expires_at = EXCLUDED.expires_at, " +
+			"created_at = EXCLUDED.created_at, " +
 			"updated_at = now()").
 		ToSql()
 	if err != nil {
@@ -680,6 +683,7 @@ func (dr *DurableRepo) upsertMembershipTx(
 			"available_quantity = EXCLUDED.available_quantity, " +
 			"current_token = EXCLUDED.current_token, " +
 			"expires_at = EXCLUDED.expires_at, " +
+			"created_at = EXCLUDED.created_at, " +
 			"updated_at = now()").
 		ToSql()
 	if err != nil {
@@ -849,13 +853,12 @@ func (dr *DurableRepo) GetProductMetrics(ctx context.Context, productID string) 
 		),
 		qm_metrics AS (
 			SELECT 
-				COUNT(qm.id) AS total_contenders,
-				COUNT(qm.id) FILTER (WHERE qm.status = 'SOLD_OUT') AS soldout_count,
-				AVG(EXTRACT(EPOCH FROM (qm.updated_at - qm.created_at))) FILTER (WHERE qm.status = 'DECLINED' AND r.token IS NULL) AS avg_dropoff_time,
-				COUNT(qm.id) FILTER (WHERE qm.status = 'DECLINED' AND r.token IS NULL) AS dropoff_count
+				COUNT(*) AS total_contenders,
+				COUNT(*) FILTER (WHERE status = 'SOLD_OUT') AS soldout_count,
+				AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) FILTER (WHERE status = 'DECLINED') AS avg_dropoff_time,
+				COUNT(*) FILTER (WHERE status = 'DECLINED') AS dropoff_count
 			FROM queue_memberships qm
-			LEFT JOIN rights r ON qm.user_id = r.user_id AND qm.product_id = r.product_id
-			WHERE qm.product_id = ?
+			WHERE product_id = ?
 		),
 		rights_metrics AS (
 			SELECT 
