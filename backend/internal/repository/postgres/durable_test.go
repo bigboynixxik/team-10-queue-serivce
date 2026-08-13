@@ -152,6 +152,14 @@ func (s *RepoTestSuite) TestSaveRight_InvalidQuantity() {
 
 func (s *RepoTestSuite) TestIssueRightAndUpsertMembershipTx_Success() {
 	now := time.Now().UTC().Truncate(time.Microsecond)
+	previousJoin := now.Add(-time.Hour)
+	_, err := s.pool.Exec(s.ctx, `
+		INSERT INTO queue_memberships
+			(product_id, user_id, status, quantity, created_at, updated_at)
+		VALUES ('prod-1', 'user-1', 'DECLINED', 1, $1, $1)
+	`, previousJoin)
+	require.NoError(s.T(), err)
+
 	right := &models.Right{
 		Token: "atomic-token", UserID: "user-1", ProductID: "prod-1",
 		Quantity: 2, Status: models.RightStatusActive,
@@ -164,17 +172,19 @@ func (s *RepoTestSuite) TestIssueRightAndUpsertMembershipTx_Success() {
 		CreatedAt: now, UpdatedAt: now,
 	}
 
-	err := s.repo.IssueRightAndUpsertMembershipTx(s.ctx, right, membership)
+	err = s.repo.IssueRightAndUpsertMembershipTx(s.ctx, right, membership)
 	require.NoError(s.T(), err)
 
 	var token string
+	var createdAt time.Time
 	err = s.pool.QueryRow(s.ctx, `
-		SELECT current_token
+		SELECT current_token, created_at
 		FROM queue_memberships
 		WHERE product_id = $1 AND user_id = $2
-	`, "prod-1", "user-1").Scan(&token)
+	`, "prod-1", "user-1").Scan(&token, &createdAt)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), right.Token, token)
+	require.Equal(s.T(), now, createdAt)
 
 	storedRight, err := s.repo.GetRightByToken(s.ctx, right.Token)
 	require.NoError(s.T(), err)
@@ -211,13 +221,14 @@ func (s *RepoTestSuite) TestGetRightByToken_NotFound() {
 // TestUpsertMembership validates inserting a new membership and updating it subsequently.
 func (s *RepoTestSuite) TestUpsertMembership() {
 	now := time.Now().UTC().Truncate(time.Microsecond)
+	previousJoin := now.Add(-time.Hour)
 	membership := &models.QueueMembership{
 		ProductID: "prod-1",
 		UserID:    "user-1",
 		Status:    models.MembershipStatusQueued,
 		Quantity:  1,
-		CreatedAt: now,
-		UpdatedAt: now,
+		CreatedAt: previousJoin,
+		UpdatedAt: previousJoin,
 	}
 
 	err := s.repo.UpsertMembership(s.ctx, membership)
@@ -225,15 +236,19 @@ func (s *RepoTestSuite) TestUpsertMembership() {
 
 	membership.Status = models.MembershipStatusOfferPending
 	membership.AvailableQuantity = ptr(1)
+	rejoinedAt := now
+	membership.CreatedAt = rejoinedAt
 	err = s.repo.UpsertMembership(s.ctx, membership)
 	require.NoError(s.T(), err)
 
 	var status string
 	var availQty *int
-	err = s.pool.QueryRow(s.ctx, `SELECT status, available_quantity FROM queue_memberships WHERE product_id=$1 AND user_id=$2`, membership.ProductID, membership.UserID).Scan(&status, &availQty)
+	var createdAt time.Time
+	err = s.pool.QueryRow(s.ctx, `SELECT status, available_quantity, created_at FROM queue_memberships WHERE product_id=$1 AND user_id=$2`, membership.ProductID, membership.UserID).Scan(&status, &availQty, &createdAt)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), string(models.MembershipStatusOfferPending), status)
 	require.Equal(s.T(), 1, *availQty)
+	require.Equal(s.T(), rejoinedAt, createdAt)
 }
 
 // TestSaveInitialStock validates idempotency when saving the initial stock multiple times.
@@ -800,13 +815,13 @@ func (s *RepoTestSuite) TestGetProductMetrics_Success() {
 		VALUES
 			('prod-metrics-1', 'user-1', 'PURCHASED', 1, 'token-u1', $1, $1),
 			('prod-metrics-1', 'user-2', 'PURCHASED', 1, 'token-u2', $1, $1),
-			('prod-metrics-1', 'user-3', 'DECLINED', 1, 'token-u3', $1, $1),
+			('prod-metrics-1', 'user-3', 'DECLINED', 1, 'token-u3', $1, $4),
 			('prod-metrics-1', 'user-4', 'SOLD_OUT', 1, NULL, $1, $1),
 			('prod-metrics-1', 'user-5', 'SOLD_OUT', 1, NULL, $1, $1),
 			('prod-metrics-1', 'user-6', 'SOLD_OUT', 1, NULL, $1, $1),
 			('prod-metrics-1', 'user-7', 'DECLINED', 1, NULL, $1, $2),
 			('prod-metrics-1', 'user-8', 'DECLINED', 1, NULL, $1, $3)
-	`, base, base.Add(40*time.Second), base.Add(60*time.Second))
+	`, base, base.Add(40*time.Second), base.Add(60*time.Second), base.Add(20*time.Second))
 	s.Require().NoError(err)
 
 	metrics, err := s.repo.GetProductMetrics(s.ctx, "prod-metrics-1")
@@ -818,11 +833,11 @@ func (s *RepoTestSuite) TestGetProductMetrics_Success() {
 	s.Equal(2, metrics.UsedRightsCount)
 	s.Equal(1, metrics.ExpiredRightsCount)
 	s.Equal(3, metrics.SoldOutCount)
-	s.Equal(2, metrics.DropOffCount)
+	s.Equal(3, metrics.DropOffCount)
 	s.Require().NotNil(metrics.AvgPaymentTime)
 	s.Equal(20*time.Second, *metrics.AvgPaymentTime)
 	s.Require().NotNil(metrics.AvgDropOffTime)
-	s.Equal(50*time.Second, *metrics.AvgDropOffTime)
+	s.Equal(40*time.Second, *metrics.AvgDropOffTime)
 }
 
 // TestGetProductMetrics_NotFound verifies that querying metrics for a non-existent
@@ -866,9 +881,9 @@ func (s *RepoTestSuite) TestGetProductMetrics_NoTimeData() {
 	s.Nil(metrics.AvgDropOffTime)
 }
 
-// TestGetProductMetrics_DropOffIsolation verifies the LEFT JOIN logic to ensure
-// that memberships marked DECLINED due to an expired right are not counted as voluntary drop-offs.
-func (s *RepoTestSuite) TestGetProductMetrics_DropOffIsolation() {
+// TestGetProductMetrics_DeclinedWithHistoricalRights verifies that every DECLINED
+// membership is counted once even when the user has multiple historical rights.
+func (s *RepoTestSuite) TestGetProductMetrics_DeclinedWithHistoricalRights() {
 	base := time.Now().UTC().Truncate(time.Second)
 
 	_, err := s.pool.Exec(s.ctx, `
@@ -881,15 +896,16 @@ func (s *RepoTestSuite) TestGetProductMetrics_DropOffIsolation() {
 		INSERT INTO rights
 			(token, user_id, product_id, quantity, status, created_at, expires_at)
 		VALUES
-			('token-exp', 'user-1', 'prod-iso', 1, 'EXPIRED', $1, $2)
+			('token-exp-1', 'user-1', 'prod-iso', 1, 'EXPIRED', $1, $2),
+			('token-exp-2', 'user-1', 'prod-iso', 1, 'EXPIRED', $1, $2)
 	`, base, base.Add(time.Minute))
 	s.Require().NoError(err)
 
 	_, err = s.pool.Exec(s.ctx, `
 		INSERT INTO queue_memberships
-			(product_id, user_id, status, quantity, current_token, created_at, updated_at)
+			(product_id, user_id, status, quantity, created_at, updated_at)
 		VALUES
-			('prod-iso', 'user-1', 'DECLINED', 1, 'token-exp', $1, $2)
+			('prod-iso', 'user-1', 'DECLINED', 1, $1, $2)
 	`, base, base.Add(time.Minute))
 	s.Require().NoError(err)
 
@@ -898,9 +914,10 @@ func (s *RepoTestSuite) TestGetProductMetrics_DropOffIsolation() {
 	s.Require().NoError(err)
 	s.Require().NotNil(metrics)
 	s.Equal(1, metrics.TotalContenders)
-	s.Equal(1, metrics.ExpiredRightsCount)
-	s.Equal(0, metrics.DropOffCount)
-	s.Nil(metrics.AvgDropOffTime)
+	s.Equal(2, metrics.ExpiredRightsCount)
+	s.Equal(1, metrics.DropOffCount)
+	s.Require().NotNil(metrics.AvgDropOffTime)
+	s.Equal(time.Minute, *metrics.AvgDropOffTime)
 }
 
 // TestGetProductMetrics_ProductBoundary verifies that the CTE aggregations strictly
