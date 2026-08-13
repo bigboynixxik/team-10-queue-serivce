@@ -51,10 +51,12 @@ export const OrderInfoPage = (): React.JSX.Element => {
           <SellerProductStats productId={product.id} price={product.price} />
         </div>
       )}
-      <section className={styles[bem('others')]}>
-        <h2 className={styles[bem('others-title')]}>Другие товары</h2>
-        <ProductCatalog excludeId={product.id} />
-      </section>
+      {!isSeller && (
+        <section className={styles[bem('others')]}>
+          <h2 className={styles[bem('others-title')]}>Другие товары</h2>
+          <ProductCatalog excludeId={product.id} />
+        </section>
+      )}
     </main>
   );
 };
