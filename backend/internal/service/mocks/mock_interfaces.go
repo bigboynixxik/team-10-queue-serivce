@@ -102,6 +102,21 @@ func (mr *MockDurableRepoMockRecorder) ExpireRights(ctx, tokens any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpireRights", reflect.TypeOf((*MockDurableRepo)(nil).ExpireRights), ctx, tokens)
 }
 
+// GetProductMetrics mocks base method.
+func (m *MockDurableRepo) GetProductMetrics(ctx context.Context, productID string) (*models.ProductMetrics, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetProductMetrics", ctx, productID)
+	ret0, _ := ret[0].(*models.ProductMetrics)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetProductMetrics indicates an expected call of GetProductMetrics.
+func (mr *MockDurableRepoMockRecorder) GetProductMetrics(ctx, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetProductMetrics", reflect.TypeOf((*MockDurableRepo)(nil).GetProductMetrics), ctx, productID)
+}
+
 // GetRightByToken mocks base method.
 func (m *MockDurableRepo) GetRightByToken(ctx context.Context, token string) (*models.Right, error) {
 	m.ctrl.T.Helper()
@@ -418,21 +433,6 @@ func (mr *MockCacheRepoMockRecorder) GetQueueMetrics(ctx, productID, userID any)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetQueueMetrics", reflect.TypeOf((*MockCacheRepo)(nil).GetQueueMetrics), ctx, productID, userID)
 }
 
-// GetUserPresenceDeadline mocks base method.
-func (m *MockCacheRepo) GetUserPresenceDeadline(ctx context.Context, userID string) (*time.Time, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUserPresenceDeadline", ctx, userID)
-	ret0, _ := ret[0].(*time.Time)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUserPresenceDeadline indicates an expected call of GetUserPresenceDeadline.
-func (mr *MockCacheRepoMockRecorder) GetUserPresenceDeadline(ctx, userID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserPresenceDeadline", reflect.TypeOf((*MockCacheRepo)(nil).GetUserPresenceDeadline), ctx, userID)
-}
-
 // GetRight mocks base method.
 func (m *MockCacheRepo) GetRight(ctx context.Context, token string) (*models.Right, error) {
 	m.ctrl.T.Helper()
@@ -462,6 +462,21 @@ func (m *MockCacheRepo) GetStock(ctx context.Context, productID string) (int, in
 func (mr *MockCacheRepoMockRecorder) GetStock(ctx, productID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStock", reflect.TypeOf((*MockCacheRepo)(nil).GetStock), ctx, productID)
+}
+
+// GetUserPresenceDeadline mocks base method.
+func (m *MockCacheRepo) GetUserPresenceDeadline(ctx context.Context, userID string) (*time.Time, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUserPresenceDeadline", ctx, userID)
+	ret0, _ := ret[0].(*time.Time)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUserPresenceDeadline indicates an expected call of GetUserPresenceDeadline.
+func (mr *MockCacheRepoMockRecorder) GetUserPresenceDeadline(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserPresenceDeadline", reflect.TypeOf((*MockCacheRepo)(nil).GetUserPresenceDeadline), ctx, userID)
 }
 
 // InitStock mocks base method.
@@ -726,20 +741,6 @@ func (mr *MockCacheRepoMockRecorder) SetMembership(ctx, membership any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetMembership", reflect.TypeOf((*MockCacheRepo)(nil).SetMembership), ctx, membership)
 }
 
-// SetUserPresenceDeadline mocks base method.
-func (m *MockCacheRepo) SetUserPresenceDeadline(ctx context.Context, userID string, deadline time.Time) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetUserPresenceDeadline", ctx, userID, deadline)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SetUserPresenceDeadline indicates an expected call of SetUserPresenceDeadline.
-func (mr *MockCacheRepoMockRecorder) SetUserPresenceDeadline(ctx, userID, deadline any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetUserPresenceDeadline", reflect.TypeOf((*MockCacheRepo)(nil).SetUserPresenceDeadline), ctx, userID, deadline)
-}
-
 // SetRight mocks base method.
 func (m *MockCacheRepo) SetRight(ctx context.Context, right *models.Right) error {
 	m.ctrl.T.Helper()
@@ -752,6 +753,20 @@ func (m *MockCacheRepo) SetRight(ctx context.Context, right *models.Right) error
 func (mr *MockCacheRepoMockRecorder) SetRight(ctx, right any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetRight", reflect.TypeOf((*MockCacheRepo)(nil).SetRight), ctx, right)
+}
+
+// SetUserPresenceDeadline mocks base method.
+func (m *MockCacheRepo) SetUserPresenceDeadline(ctx context.Context, userID string, deadline time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetUserPresenceDeadline", ctx, userID, deadline)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetUserPresenceDeadline indicates an expected call of SetUserPresenceDeadline.
+func (mr *MockCacheRepoMockRecorder) SetUserPresenceDeadline(ctx, userID, deadline any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetUserPresenceDeadline", reflect.TypeOf((*MockCacheRepo)(nil).SetUserPresenceDeadline), ctx, userID, deadline)
 }
 
 // TryAllocate mocks base method.
