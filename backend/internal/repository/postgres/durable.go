@@ -849,10 +849,10 @@ func (dr *DurableRepo) GetProductMetrics(ctx context.Context, productID string) 
 		),
 		qm_metrics AS (
 			SELECT 
-				COUNT(id) AS total_contenders,
-				COUNT(id) FILTER (WHERE status = 'SOLD_OUT') AS soldout_count,
-				AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) FILTER (WHERE status = 'DECLINED' AND r.token IS NULL) AS avg_dropoff_time,
-				COUNT(id) FILTER (WHERE status = 'DECLINED' AND r.token IS NULL) AS dropoff_count
+				COUNT(qm.id) AS total_contenders,
+				COUNT(qm.id) FILTER (WHERE qm.status = 'SOLD_OUT') AS soldout_count,
+				AVG(EXTRACT(EPOCH FROM (qm.updated_at - qm.created_at))) FILTER (WHERE qm.status = 'DECLINED' AND r.token IS NULL) AS avg_dropoff_time,
+				COUNT(qm.id) FILTER (WHERE qm.status = 'DECLINED' AND r.token IS NULL) AS dropoff_count
 			FROM queue_memberships qm
 			LEFT JOIN rights r ON qm.user_id = r.user_id AND qm.product_id = r.product_id
 			WHERE qm.product_id = ?
