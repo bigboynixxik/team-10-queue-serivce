@@ -68,12 +68,14 @@ var (
 	enqueueScript = redis.NewScript(`
 		local seq = redis.call('INCR', KEYS[1])
 		redis.call('ZADD', KEYS[2], seq, ARGV[1])
+		redis.call('SADD', KEYS[4], ARGV[2])
 		redis.call('PUBLISH', KEYS[3], 'changed')
 		return seq
 	`)
 
 	removeFromQueueScript = redis.NewScript(`
 		local removed = redis.call('ZREM', KEYS[1], ARGV[1])
+		redis.call('SREM', KEYS[3], ARGV[2])
 		if removed > 0 then
 			redis.call('PUBLISH', KEYS[2], 'changed')
 		end
@@ -88,6 +90,7 @@ var (
 
 	requeueScript = redis.NewScript(`
 		redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
+		redis.call('SADD', KEYS[3], ARGV[3])
 		redis.call('PUBLISH', KEYS[2], 'changed')
 		return 1
 	`)
@@ -96,12 +99,16 @@ var (
 		redis.call('DEL', KEYS[1])
 		redis.call('HSET', KEYS[1], 'product_count', ARGV[1], 'available_units', ARGV[2])
 
+		local previousUsers = redis.call('ZRANGE', KEYS[2], 0, -1)
+		for _, uid in ipairs(previousUsers) do
+			redis.call('SREM', "queued-products:" .. uid, ARGV[#ARGV])
+		end
 		redis.call('DEL', KEYS[2])
-		for i = 3, #ARGV do
+		for i = 3, #ARGV - 1 do
 			redis.call('ZADD', KEYS[2], i - 2, ARGV[i])
 		end
 
-		redis.call('SET', KEYS[3], #ARGV - 2)
+		redis.call('SET', KEYS[3], #ARGV - 3)
 		return 1
 	`)
 
@@ -111,6 +118,34 @@ var (
 		end
 
 		return redis.call('DEL', KEYS[1])
+	`)
+
+	// occupyQueueSlotScript takes one slot in the per-user set of active queues,
+	// but only while the user stays under the limit.
+	//
+	// The check and the insert have to be one step: two parallel joins into
+	// different products would both read a count below the limit and both pass,
+	// which is exactly how a limit gets bypassed. Re-joining a queue the user
+	// already occupies is free — the set makes that idempotent for nothing.
+	//
+	// Returns 0 when refused, 1 when a fresh slot was taken, 2 when the queue was
+	// already occupied. The caller needs the difference: only a fresh slot may be
+	// rolled back if the rest of the join fails.
+	occupyQueueSlotScript = redis.NewScript(`
+		local key = KEYS[1]
+		local productID = ARGV[1]
+		local limit = tonumber(ARGV[2])
+
+		if redis.call('SISMEMBER', key, productID) == 1 then
+			return 2
+		end
+
+		if redis.call('SCARD', key) >= limit then
+			return 0
+		end
+
+		redis.call('SADD', key, productID)
+		return 1
 	`)
 
 	// claimExpiredScript moves due timers from the scheduled set into the
@@ -224,10 +259,6 @@ var (
 		end
 
 		local deadline = tonumber(ARGV[2])
-		local now = tonumber(ARGV[3])
-		if tonumber(current) <= now then
-			return 0
-		end
 
 		if deadline > tonumber(current) then
 			redis.call('ZADD', KEYS[1], deadline, ARGV[1])
@@ -254,6 +285,7 @@ var (
 			'updated_at', ARGV[2]
 		)
 		redis.call('ZREM', KEYS[2], ARGV[3])
+		redis.call('SREM', KEYS[4], ARGV[4])
 		redis.call('PUBLISH', KEYS[3], cjson.encode({status = 'PURCHASED'}))
 		return 1
 	`)
@@ -275,6 +307,7 @@ var (
 		local status = redis.call('HGET', memKey, 'status')
 		if not status or status ~= 'QUEUED' then
 			redis.call('ZREM', queueKey, uid)
+			redis.call('SREM', "queued-products:" .. uid, pid)
 			redis.call('PUBLISH', KEYS[3], 'changed')
 			return {uid, 0, 0, 0, status or "GHOST", score}
 		end
@@ -285,6 +318,7 @@ var (
 
 		if count == 0 then
 			redis.call('ZREM', queueKey, uid)
+			redis.call('SREM', "queued-products:" .. uid, pid)
 			redis.call('PUBLISH', KEYS[3], 'changed')
 			return {uid, 0, 0, 1, "SOLD_OUT", score}
 		end
@@ -292,6 +326,7 @@ var (
 		if avail >= reqQty then
 			redis.call('HINCRBY', stockKey, 'available_units', -reqQty)
 			redis.call('ZREM', queueKey, uid)
+			redis.call('SREM', "queued-products:" .. uid, pid)
 			redis.call('PUBLISH', KEYS[3], 'changed')
 			return {uid, reqQty, 0, 0, "RIGHT_ACTIVE", score}
 		end
@@ -299,6 +334,7 @@ var (
 		if avail > 0 then
 			redis.call('HINCRBY', stockKey, 'available_units', -avail)
 			redis.call('ZREM', queueKey, uid)
+			redis.call('SREM', "queued-products:" .. uid, pid)
 			redis.call('PUBLISH', KEYS[3], 'changed')
 			return {uid, 0, avail, 0, "OFFER_PENDING", score}
 		end
@@ -325,6 +361,14 @@ func userUpdatesChannel(productID, userID string) string {
 
 func queueUpdatesChannel(productID string) string {
 	return fmt.Sprintf("queue-updates:%s", productID)
+}
+
+func queuedProductsKey(userID string) string {
+	return fmt.Sprintf("queued-products:%s", userID)
+}
+
+func userPresenceKey(userID string) string {
+	return fmt.Sprintf("presence:%s", userID)
 }
 
 // InitStock initializes the product stock in the cache if it doesn't already exist.
@@ -378,7 +422,13 @@ func (c *CacheRepo) Enqueue(ctx context.Context, productID string, userID string
 	seqKey := fmt.Sprintf("queue:%s:seq", productID)
 	queueKey := fmt.Sprintf("queue:%s", productID)
 
-	err := enqueueScript.Run(ctx, c.client, []string{seqKey, queueKey, queueUpdatesChannel(productID)}, userID).Err()
+	err := enqueueScript.Run(
+		ctx,
+		c.client,
+		[]string{seqKey, queueKey, queueUpdatesChannel(productID), queuedProductsKey(userID)},
+		userID,
+		productID,
+	).Err()
 	if err != nil {
 		return fmt.Errorf("redis.CacheRepo.Enqueue: %w", err)
 	}
@@ -388,14 +438,66 @@ func (c *CacheRepo) Enqueue(ctx context.Context, productID string, userID string
 // RemoveFromQueue completely removes a user from the product's queue.
 func (c *CacheRepo) RemoveFromQueue(ctx context.Context, productID string, userID string) error {
 	queueKey := fmt.Sprintf("queue:%s", productID)
-	err := removeFromQueueScript.Run(ctx, c.client, []string{queueKey, queueUpdatesChannel(productID)}, userID).Err()
+	err := removeFromQueueScript.Run(
+		ctx,
+		c.client,
+		[]string{queueKey, queueUpdatesChannel(productID), queuedProductsKey(userID)},
+		userID,
+		productID,
+	).Err()
 	if err != nil {
 		return fmt.Errorf("redis.CacheRepo.RemoveFromQueue: %w", err)
 	}
 	return nil
 }
 
+// ListQueuedProducts returns the compact per-user index maintained alongside
+// every FIFO transition. Callers still recheck the membership status.
+func (c *CacheRepo) ListQueuedProducts(ctx context.Context, userID string) ([]string, error) {
+	products, err := c.client.SMembers(ctx, queuedProductsKey(userID)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis.CacheRepo.ListQueuedProducts: %w", err)
+	}
+
+	return products, nil
+}
+
+// SetUserPresenceDeadline records one shared deadline for all browser tabs of a
+// user. Closing one connection cannot shorten a deadline extended by another.
+func (c *CacheRepo) SetUserPresenceDeadline(
+	ctx context.Context, userID string, deadline time.Time,
+) error {
+	err := c.client.Set(ctx, userPresenceKey(userID), deadline.Unix(), 0).Err()
+	if err != nil {
+		return fmt.Errorf("redis.CacheRepo.SetUserPresenceDeadline: %w", err)
+	}
+
+	return nil
+}
+
+// GetUserPresenceDeadline reads the last successful application heartbeat.
+func (c *CacheRepo) GetUserPresenceDeadline(
+	ctx context.Context, userID string,
+) (*time.Time, error) {
+	unix, err := c.client.Get(ctx, userPresenceKey(userID)).Int64()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("redis.CacheRepo.GetUserPresenceDeadline: %w", err)
+	}
+
+	deadline := time.Unix(unix, 0).UTC()
+	return &deadline, nil
+}
+
 // SetMembership quickly caches the user's current state.
+//
+// Every state machine transition passes through here, so this is also where the
+// per-user set of active queues is kept honest: a terminal status releases the
+// slot, any other status holds it. Keeping both writes in one transaction means
+// the slot can never outlive the membership that justified it — including during
+// recovery, which replays memberships through this same method.
 func (c *CacheRepo) SetMembership(ctx context.Context, membership *models.QueueMembership) error {
 	key := fmt.Sprintf("member:%s:%s", membership.ProductID, membership.UserID)
 
@@ -426,10 +528,21 @@ func (c *CacheRepo) SetMembership(ctx context.Context, membership *models.QueueM
 		fields["expires_at"] = ""
 	}
 
-	err := c.client.HSet(ctx, key, fields).Err()
-	if err != nil {
+	slotsKey := userQueuesKey(membership.UserID)
+
+	pipe := c.client.TxPipeline()
+	pipe.HSet(ctx, key, fields)
+
+	if membership.Status.IsTerminal() {
+		pipe.SRem(ctx, slotsKey, membership.ProductID)
+	} else {
+		pipe.SAdd(ctx, slotsKey, membership.ProductID)
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis.CacheRepo.SetMembership: %w", err)
 	}
+
 	return nil
 }
 
@@ -470,8 +583,12 @@ func (c *CacheRepo) GetMembership(ctx context.Context, productID string, userID 
 }
 
 // MarkPurchasedIfCurrentToken finalizes a cached membership only while the
-// membership still points at the paid token. The membership update and timer
-// removal are atomic, so an old webhook cannot delete a newer right timer.
+// membership still points at the paid token. The membership update, timer
+// removal and slot release are atomic, so an old webhook cannot delete a newer
+// right timer.
+//
+// This path bypasses SetMembership, so it has to free the queue slot itself:
+// a purchase is terminal and must not keep counting against the limit.
 func (c *CacheRepo) MarkPurchasedIfCurrentToken(
 	ctx context.Context,
 	right *models.Right,
@@ -487,10 +604,12 @@ func (c *CacheRepo) MarkPurchasedIfCurrentToken(
 			membershipKey,
 			"expiring:rights",
 			userUpdatesChannel(right.ProductID, right.UserID),
+			userQueuesKey(right.UserID),
 		},
 		right.Token,
 		updatedAt.Format(time.RFC3339Nano),
 		timerMember,
+		right.ProductID,
 	).Int()
 	if err != nil {
 		return false, fmt.Errorf("redis.CacheRepo.MarkPurchasedIfCurrentToken: %w", err)
@@ -646,8 +765,9 @@ func (c *CacheRepo) AddToExpiryTimer(ctx context.Context, productID string, user
 	return nil
 }
 
-// RefreshExpiryTimer extends an existing timer without recreating one already
-// claimed by the expiration worker. Concurrent refreshes can only move it forward.
+// RefreshExpiryTimer extends an existing scheduled timer without recreating one
+// already claimed by the expiration worker. Concurrent refreshes only move it
+// forward; an elapsed but unclaimed presence timer can still be renewed.
 func (c *CacheRepo) RefreshExpiryTimer(
 	ctx context.Context,
 	productID string,
@@ -657,7 +777,7 @@ func (c *CacheRepo) RefreshExpiryTimer(
 	member := fmt.Sprintf("%s:%s", productID, userID)
 
 	refreshed, err := refreshExpiryTimerScript.Run(
-		ctx, c.client, []string{"expiring:rights"}, member, expiresAt.Unix(), time.Now().UTC().Unix(),
+		ctx, c.client, []string{"expiring:rights"}, member, expiresAt.Unix(),
 	).Int()
 	if err != nil {
 		return false, fmt.Errorf("redis.CacheRepo.RefreshExpiryTimer: %w", err)
@@ -766,9 +886,10 @@ func (c *CacheRepo) Requeue(ctx context.Context, productID string, userID string
 	err := requeueScript.Run(
 		ctx,
 		c.client,
-		[]string{queueKey, queueUpdatesChannel(productID)},
+		[]string{queueKey, queueUpdatesChannel(productID), queuedProductsKey(userID)},
 		score,
 		userID,
+		productID,
 	).Err()
 	if err != nil {
 		return fmt.Errorf("redis.CacheRepo.Requeue: %w", err)
@@ -786,11 +907,12 @@ func (c *CacheRepo) RestoreProductState(
 	available int,
 	queuedUserIDs []string,
 ) error {
-	args := make([]any, 0, len(queuedUserIDs)+2)
+	args := make([]any, 0, len(queuedUserIDs)+3)
 	args = append(args, productCount, available)
 	for _, userID := range queuedUserIDs {
 		args = append(args, userID)
 	}
+	args = append(args, productID)
 
 	err := restoreProductStateScript.Run(
 		ctx,
@@ -806,14 +928,102 @@ func (c *CacheRepo) RestoreProductState(
 		return fmt.Errorf("redis.CacheRepo.RestoreProductState: %w", err)
 	}
 
+	pipe := c.client.Pipeline()
+	for _, userID := range queuedUserIDs {
+		pipe.SAdd(ctx, queuedProductsKey(userID), productID)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis.CacheRepo.RestoreProductState index queues: %w", err)
+	}
+
 	return nil
+}
+
+// TryOccupyQueueSlot reserves one of the user's active queue slots. It reports
+// whether the slot was granted and whether it was freshly taken: an already
+// occupied queue is granted too, but must never be rolled back, since some
+// earlier membership still relies on it.
+func (c *CacheRepo) TryOccupyQueueSlot(
+	ctx context.Context, userID string, productID string, limit int,
+) (granted bool, fresh bool, err error) {
+	outcome, err := occupyQueueSlotScript.Run(
+		ctx, c.client, []string{userQueuesKey(userID)}, productID, limit,
+	).Int()
+	if err != nil {
+		return false, false, fmt.Errorf("redis.CacheRepo.TryOccupyQueueSlot: %w", err)
+	}
+
+	return outcome != 0, outcome == 1, nil
+}
+
+// ReleaseQueueSlot gives a slot back. It compensates a join that reserved a slot
+// and then failed, so a crashed attempt does not lock the user out of a queue
+// they never actually entered.
+func (c *CacheRepo) ReleaseQueueSlot(ctx context.Context, userID string, productID string) error {
+	if err := c.client.SRem(ctx, userQueuesKey(userID), productID).Err(); err != nil {
+		return fmt.Errorf("redis.CacheRepo.ReleaseQueueSlot: %w", err)
+	}
+
+	return nil
+}
+
+// CountQueueSlots reports how many queues the user currently occupies. Reporting
+// read only: nothing is decided on its result, admission goes through
+// TryOccupyQueueSlot.
+func (c *CacheRepo) CountQueueSlots(ctx context.Context, userID string) (int, error) {
+	count, err := c.client.SCard(ctx, userQueuesKey(userID)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis.CacheRepo.CountQueueSlots: %w", err)
+	}
+
+	return int(count), nil
+}
+
+// ResetQueueSlots drops every per-user slot set before recovery rebuilds them
+// from PostgreSQL. Without it a queue a user has long left would keep its slot
+// forever, since nothing else ever deletes these keys.
+func (c *CacheRepo) ResetQueueSlots(ctx context.Context) error {
+	var cursor uint64
+
+	for {
+		keys, next, err := c.client.Scan(ctx, cursor, userQueuesKey("*"), scanBatchSize).Result()
+		if err != nil {
+			return fmt.Errorf("redis.CacheRepo.ResetQueueSlots scan: %w", err)
+		}
+
+		if len(keys) > 0 {
+			if err := c.client.Del(ctx, keys...).Err(); err != nil {
+				return fmt.Errorf("redis.CacheRepo.ResetQueueSlots delete: %w", err)
+			}
+		}
+
+		if next == 0 {
+			return nil
+		}
+
+		cursor = next
+	}
 }
 
 // ResetExpiryTimers clears only the expiration worker indexes. It intentionally
 // leaves unrelated Redis data intact; recovery recreates the timers from
 // PostgreSQL immediately afterwards.
 func (c *CacheRepo) ResetExpiryTimers(ctx context.Context) error {
-	err := c.client.Del(ctx, expiryScheduledKey, expiryProcessingKey, expiryDeadlineKey).Err()
+	var cursor uint64
+	keys := []string{expiryScheduledKey, expiryProcessingKey, expiryDeadlineKey}
+	for {
+		found, next, errScan := c.client.Scan(ctx, cursor, "queued-products:*", 100).Result()
+		if errScan != nil {
+			return fmt.Errorf("redis.CacheRepo.ResetExpiryTimers scan queue indexes: %w", errScan)
+		}
+		keys = append(keys, found...)
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+
+	err := c.client.Del(ctx, keys...).Err()
 	if err != nil {
 		return fmt.Errorf("redis.CacheRepo.ResetExpiryTimers: %w", err)
 	}
@@ -883,6 +1093,12 @@ func queueKey(productID string) string {
 	return fmt.Sprintf("queue:%s", productID)
 }
 
+// userQueuesKey names the set of products a user currently waits for. Membership
+// of this set is what the per-user queue limit counts.
+func userQueuesKey(userID string) string {
+	return fmt.Sprintf("user-queues:%s", userID)
+}
+
 // membershipClaimKey guards a single (product, user) pair while a transition of
 // their membership is being decided. Entry and offer acceptance share it: both
 // read the state, decide, and write, and neither may interleave with the other.
@@ -927,6 +1143,10 @@ const (
 	expiryProcessingKey = "expiring:processing"
 	expiryDeadlineKey   = "expiring:processing-deadlines"
 )
+
+// scanBatchSize bounds one SCAN pass so clearing slot sets never blocks Redis,
+// which serves every command on a single thread.
+const scanBatchSize = 500
 
 // ClaimExpired takes up to limit due timers under a lease and returns them.
 // Claimed items disappear from the schedule but are not lost: if the caller never

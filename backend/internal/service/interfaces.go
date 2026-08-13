@@ -61,6 +61,10 @@ type DurableRepo interface {
 
 	// ListMembershipsByUser returns every queue the user takes part in.
 	ListMembershipsByUser(ctx context.Context, userID string) ([]*models.QueueMembership, error)
+
+	// GetProductMetrics aggregates historical and real-time demand data for a product.
+	// It returns models.ErrProductNotFound if the product_id does not exist in product_stock.
+	GetProductMetrics(ctx context.Context, productID string) (*models.ProductMetrics, error)
 }
 
 // CacheRepo defines the contract for high-speed, concurrency-safe storage (Redis).
@@ -81,6 +85,16 @@ type CacheRepo interface {
 
 	// RemoveFromQueue completely removes a user from the product's queue.
 	RemoveFromQueue(ctx context.Context, productID string, userID string) error
+
+	// ListQueuedProducts returns products where the user is currently waiting.
+	ListQueuedProducts(ctx context.Context, userID string) ([]string, error)
+
+	// SetUserPresenceDeadline records how long the user's application-wide
+	// connection proves presence in every waiting queue.
+	SetUserPresenceDeadline(ctx context.Context, userID string, deadline time.Time) error
+
+	// GetUserPresenceDeadline returns the last confirmed presence deadline.
+	GetUserPresenceDeadline(ctx context.Context, userID string) (*time.Time, error)
 
 	// SetMembership quickly caches the user's current state.
 	SetMembership(ctx context.Context, membership *models.QueueMembership) error
@@ -115,8 +129,8 @@ type CacheRepo interface {
 	// AddToExpiryTimer sets up background tracking for a time-bound right or offer.
 	AddToExpiryTimer(ctx context.Context, productID string, userID string, expiresAt time.Time) error
 
-	// RefreshExpiryTimer atomically extends an existing timer without recreating
-	// a timer that the expiration worker has already claimed.
+	// RefreshExpiryTimer atomically extends an existing scheduled timer. It does
+	// not recreate a timer already claimed by the expiration worker.
 	RefreshExpiryTimer(
 		ctx context.Context, productID string, userID string, expiresAt time.Time,
 	) (refreshed bool, err error)
@@ -155,6 +169,22 @@ type CacheRepo interface {
 
 	// ResetExpiryTimers clears only expiration worker indexes before recovery recreates them.
 	ResetExpiryTimers(ctx context.Context) error
+
+	// TryOccupyQueueSlot reserves one of the user's active queue slots. It reports
+	// whether the slot was granted and whether it was freshly taken; only a fresh
+	// slot may be released on a failed join.
+	TryOccupyQueueSlot(
+		ctx context.Context, userID string, productID string, limit int,
+	) (granted bool, fresh bool, err error)
+
+	// ReleaseQueueSlot returns a slot taken by an entry that did not complete.
+	ReleaseQueueSlot(ctx context.Context, userID string, productID string) error
+
+	// CountQueueSlots reports how many queues the user currently occupies.
+	CountQueueSlots(ctx context.Context, userID string) (int, error)
+
+	// ResetQueueSlots drops every per-user slot set before recovery rebuilds them.
+	ResetQueueSlots(ctx context.Context) error
 
 	// GetQueueMetrics retrieves the user's 0-indexed rank in the queue and the currently available stock.
 	// It uses a pipeline to minimize network round-trips for real-time ETA calculation.

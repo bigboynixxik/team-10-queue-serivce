@@ -8,6 +8,7 @@ import axios, {
 import { API_BASE_URL, USER_ID_STORAGE_KEY } from '@shared/config';
 
 import BadRequest from './error/BadRequest';
+import { conflictMessage } from './error/conflictMessage';
 import { getApiErrorMessages } from './error/get-api-error-messages';
 import HttpError from './error/HttpError';
 import NoAccess from './error/NoAccess';
@@ -114,10 +115,6 @@ abstract class HttpClient {
   private handleError(error: AxiosError): Promise<never> {
     const status = error.response?.status ?? error.status;
     const messages = getApiErrorMessages(error, error.message);
-    const responseStatus =
-      typeof error.response?.data === 'object' && error.response.data !== null
-        ? (error.response.data as { status?: unknown }).status
-        : undefined;
 
     switch (status) {
       case 400:
@@ -127,9 +124,8 @@ abstract class HttpClient {
       case 404:
         return Promise.reject(new NotFoundError(messages));
       case 409:
-        // 409 с sold_out это конец товара а не общий конфликт
         return Promise.reject(
-          new HttpError(status, responseStatus === 'SOLD_OUT' ? 'Товара больше нет' : messages),
+          new HttpError(status, conflictMessage(error.response?.data, messages)),
         );
       case 500:
         return Promise.reject(new ServerError(messages));

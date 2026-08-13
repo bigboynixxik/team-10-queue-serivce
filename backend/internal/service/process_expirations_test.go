@@ -153,6 +153,53 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_AlreadyHandled() {
 	require.NoError(s.T(), err)
 }
 
+func (s *QueueServiceTestSuite) TestProcessExpirations_QueuedPresenceExpired() {
+	s.expectExpirationClaim([]string{"prod-1:user-1"}, nil)
+
+	mem := &models.QueueMembership{
+		ProductID: "prod-1",
+		UserID:    "user-1",
+		Status:    models.MembershipStatusQueued,
+	}
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
+	s.mockCache.EXPECT().ClaimMembership(
+		s.ctx, "__user_presence__", "user-1", gomock.Any(), gomock.Any(),
+	).Return(true, nil)
+	s.mockCache.EXPECT().ReleaseMembershipClaim(
+		gomock.Any(), "__user_presence__", "user-1", gomock.Any(),
+	).Return(nil)
+	s.mockCache.EXPECT().GetUserPresenceDeadline(s.ctx, "user-1").Return(nil, nil)
+	s.mockDurable.EXPECT().UpsertMembership(s.ctx, gomock.Cond(func(value any) bool {
+		membership, ok := value.(*models.QueueMembership)
+		return ok && membership.Status == models.MembershipStatusDeclined
+	})).Return(nil)
+	s.mockCache.EXPECT().SetMembership(s.ctx, mem).Return(nil)
+	s.mockCache.EXPECT().PublishEvent(
+		s.ctx, "prod-1", "user-1", map[string]string{"status": string(models.MembershipStatusDeclined)},
+	).Return(nil)
+	s.mockCache.EXPECT().RemoveFromQueue(s.ctx, "prod-1", "user-1").Return(nil)
+
+	s.Require().NoError(s.srv.ProcessExpirations(s.ctx))
+}
+
+func (s *QueueServiceTestSuite) TestProcessExpirations_ReconnectedQueuedUserSurvivesOldClaim() {
+	s.expectExpirationClaim([]string{"prod-1:user-1"}, nil)
+
+	mem := &models.QueueMembership{ProductID: "prod-1", UserID: "user-1", Status: models.MembershipStatusQueued}
+	presenceDeadline := time.Now().UTC().Add(time.Minute)
+	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
+	s.mockCache.EXPECT().ClaimMembership(
+		s.ctx, "__user_presence__", "user-1", gomock.Any(), gomock.Any(),
+	).Return(true, nil)
+	s.mockCache.EXPECT().ReleaseMembershipClaim(
+		gomock.Any(), "__user_presence__", "user-1", gomock.Any(),
+	).Return(nil)
+	s.mockCache.EXPECT().GetUserPresenceDeadline(s.ctx, "user-1").Return(&presenceDeadline, nil)
+	s.mockCache.EXPECT().AddToExpiryTimer(s.ctx, "prod-1", "user-1", presenceDeadline).Return(nil)
+
+	s.Require().NoError(s.srv.ProcessExpirations(s.ctx))
+}
+
 // TestProcessExpirations_MembershipFetchError verifies that temporary infrastructure
 // errors when fetching user details are safely caught, allowing the loop to continue.
 func (s *QueueServiceTestSuite) TestProcessExpirations_MembershipFetchError() {
@@ -236,9 +283,6 @@ func (s *QueueServiceTestSuite) TestProcessExpirations_StaleClaimDoesNotExpireNe
 		UpdatedAt:    now,
 	}
 	s.mockCache.EXPECT().GetMembership(s.ctx, "prod-1", "user-1").Return(mem, nil)
-	s.mockCache.EXPECT().RefreshExpiryTimer(
-		s.ctx, "prod-1", "user-1", gomock.Any(),
-	).Return(false, nil)
 	s.mockCache.EXPECT().AddToExpiryTimer(
 		s.ctx, "prod-1", "user-1", gomock.Any(),
 	).Return(nil)

@@ -1,6 +1,7 @@
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 
+import { WebSocketClient } from '@shared/api';
 import { API_BASE_URL } from '@shared/config';
 
 import { type Membership, type UserQueue, UserQueuesSchema } from '../api/type';
@@ -8,7 +9,7 @@ import { queueMembershipQueryKey, userQueuesQueryKey } from './queries';
 
 const reconnectDelays = [1000, 2000, 5000, 10000];
 
-/** пишет membership-кэши из sse списка очередей */
+/** Synchronizes product membership caches from the application-wide queue stream. */
 const syncMemberships = (queryClient: QueryClient, queues: UserQueue[]): void => {
   for (const queue of queues) {
     queryClient.setQueryData<Membership>(queueMembershipQueryKey(queue.product_id), {
@@ -21,9 +22,10 @@ const syncMemberships = (queryClient: QueryClient, queues: UserQueue[]): void =>
   }
 };
 
-const getUserQueuesSseUrl = (userId: string): string => {
+const getUserQueuesWsUrl = (userId: string): string => {
   const apiUrl = new URL(API_BASE_URL || '/api/v1', window.location.origin);
 
+  apiUrl.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
   apiUrl.pathname = `${apiUrl.pathname.replace(/\/$/, '')}/me/queues`;
   apiUrl.searchParams.set('user_id', userId);
 
@@ -47,10 +49,9 @@ export const useUserQueuesLiveUpdates = (userId: string, { onUpdate }: Options =
     let disposed = false;
     let reconnectAttempt = 0;
     let reconnectTimer: number | undefined;
-    let source: EventSource | undefined;
+    let socket: WebSocketClient<unknown> | undefined;
 
     const reconnect = () => {
-      // второй reconnect не ставим пока тикает таймер
       if (disposed || reconnectTimer !== undefined) return;
 
       const delay = reconnectDelays[Math.min(reconnectAttempt, reconnectDelays.length - 1)];
@@ -64,31 +65,31 @@ export const useUserQueuesLiveUpdates = (userId: string, { onUpdate }: Options =
     const connect = () => {
       if (disposed) return;
 
-      const nextSource = new EventSource(getUserQueuesSseUrl(userId));
-      source = nextSource;
+      const nextSocket = new WebSocketClient<unknown>({ url: getUserQueuesWsUrl(userId) });
+      socket = nextSocket;
 
-      nextSource.addEventListener('update', (event) => {
-        try {
-          const queues = UserQueuesSchema.parse(JSON.parse((event as MessageEvent<string>).data));
+      nextSocket.connect({
+        onMessage: (payload) => {
+          const result = UserQueuesSchema.safeParse(payload);
+          if (!result.success) {
+            queryClient.invalidateQueries({ queryKey });
+            return;
+          }
 
           reconnectAttempt = 0;
-          queryClient.setQueryData(queryKey, queues);
-          syncMemberships(queryClient, queues);
-          onUpdateRef.current?.(queues);
-        } catch {
+          queryClient.setQueryData(queryKey, result.data);
+          syncMemberships(queryClient, result.data);
+          onUpdateRef.current?.(result.data);
+        },
+        onError: () => queryClient.invalidateQueries({ queryKey }),
+        onClose: () => {
+          if (disposed || socket !== nextSocket) return;
+
+          socket = undefined;
           queryClient.invalidateQueries({ queryKey });
-        }
+          reconnect();
+        },
       });
-
-      nextSource.onerror = () => {
-        // onerror от уже заменённого source игнорим
-        if (disposed || source !== nextSource) return;
-
-        nextSource.close();
-        source = undefined;
-        queryClient.invalidateQueries({ queryKey });
-        reconnect();
-      };
     };
 
     connect();
@@ -96,7 +97,7 @@ export const useUserQueuesLiveUpdates = (userId: string, { onUpdate }: Options =
     return () => {
       disposed = true;
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      source?.close();
+      socket?.disconnect();
     };
   }, [queryClient, userId]);
 };

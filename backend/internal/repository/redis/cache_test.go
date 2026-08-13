@@ -941,11 +941,11 @@ func (s *CacheTestSuite) TestRefreshExpiryTimer_ExtendsExistingTimerOnlyForward(
 	require.NoError(s.T(), err)
 	refreshed, err = s.repo.RefreshExpiryTimer(s.ctx, productID, userID, later.Add(time.Minute))
 	require.NoError(s.T(), err)
-	require.False(s.T(), refreshed, "an expired lease must not be revived before the worker claims it")
+	require.True(s.T(), refreshed, "a renewed user presence may revive an unclaimed lease")
 
 	score, err = s.client.ZScore(s.ctx, "expiring:rights", member).Result()
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), float64(expired.Unix()), score)
+	require.Equal(s.T(), float64(later.Add(time.Minute).Unix()), score)
 
 	err = s.repo.RemoveFromExpiryTimer(s.ctx, productID, userID)
 	require.NoError(s.T(), err)

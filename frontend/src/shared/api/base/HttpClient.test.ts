@@ -94,6 +94,15 @@ describe('HttpClient', () => {
       message: 'Товара больше нет',
     });
     await expect(
+      onRejected({
+        response: { status: 409, data: { error: 'queue_limit_reached', limit: 5 } },
+      }),
+    ).rejects.toMatchObject({
+      code: 409,
+      message:
+        'Нельзя стоять больше чем в 5 очередях одновременно. Выйдите из одной, чтобы встать в новую.',
+    });
+    await expect(
       onRejected({ response: { status: 500, data: { message: 'boom' } } }),
     ).rejects.toMatchObject({ code: 500, message: 'boom' });
     await expect(

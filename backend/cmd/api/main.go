@@ -92,8 +92,9 @@ func run() error {
 		cfg.OfferTTL,
 		cfg.RightTTL,
 		cfg.AvgPaymentTime,
-		cfg.RightHeartbeatTimeout,
+		cfg.UserPresenceTimeout,
 		service.WithStockOutbox(cfg.StockOutboxLease, cfg.StockOutboxBatchSize, cfg.StockOutboxMaxBackoff),
+		service.WithMaxActiveQueues(cfg.MaxActiveQueues),
 	)
 
 	if err := queueService.RecoverCache(ctx); err != nil {
@@ -102,7 +103,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           api.NewRouter(api.NewQueueHandler(queueService, cacheRepo, cfg.RightHeartbeatInterval), log, cfg.InternalToken),
+		Handler:           api.NewRouter(api.NewQueueHandler(queueService, cacheRepo, cfg.UserPresencePingInterval), log, cfg.InternalToken),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 	shutdown.Add(srv.Shutdown)

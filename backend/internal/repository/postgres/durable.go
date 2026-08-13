@@ -289,6 +289,8 @@ func (dr *DurableRepo) GetRightByToken(ctx context.Context, token string) (*mode
 
 // UpsertMembership creates or updates a user's current status in the queue.
 // It relies on the UNIQUE(product_id, user_id) constraint to resolve conflicts[cite: 36].
+// CreatedAt is carried through transitions within one participation and replaced
+// by JoinQueue when the same user starts a new participation.
 func (dr *DurableRepo) UpsertMembership(ctx context.Context, membership *models.QueueMembership) error {
 	query, args, err := dr.sq.Insert("queue_memberships").
 		Columns("product_id", "user_id", "status", "quantity", "available_quantity", "current_token", "expires_at", "created_at", "updated_at").
@@ -299,6 +301,7 @@ func (dr *DurableRepo) UpsertMembership(ctx context.Context, membership *models.
 			"available_quantity = EXCLUDED.available_quantity, " +
 			"current_token = EXCLUDED.current_token, " +
 			"expires_at = EXCLUDED.expires_at, " +
+			"created_at = EXCLUDED.created_at, " +
 			"updated_at = now()").
 		ToSql()
 	if err != nil {
@@ -680,6 +683,7 @@ func (dr *DurableRepo) upsertMembershipTx(
 			"available_quantity = EXCLUDED.available_quantity, " +
 			"current_token = EXCLUDED.current_token, " +
 			"expires_at = EXCLUDED.expires_at, " +
+			"created_at = EXCLUDED.created_at, " +
 			"updated_at = now()").
 		ToSql()
 	if err != nil {
@@ -827,4 +831,82 @@ func (dr *DurableRepo) ListMembershipsByUser(ctx context.Context, userID string)
 	}
 
 	return memberships, nil
+}
+
+// GetProductMetrics builds a unified analytical report for a single product using a CTE query.
+// It executes a single network round-trip to PostgreSQL, avoiding connection pool exhaustion.
+// If no time-based data is available, it resolves the averages to nil (NULL in DB) rather than zero.
+// Returns models.ErrProductNotFound if the product_id does not exist in the product_stock table.
+func (dr *DurableRepo) GetProductMetrics(ctx context.Context, productID string) (*models.ProductMetrics, error) {
+	query, args, err := dr.sq.Select(
+		"s.total_stock",
+		"COALESCE(qm.total_contenders, 0)",
+		"COALESCE(r.used_rights_count, 0)",
+		"COALESCE(r.expired_rights_count, 0)",
+		"COALESCE(qm.soldout_count, 0)",
+		"COALESCE(qm.dropoff_count, 0)",
+		"r.avg_payment_time",
+		"qm.avg_dropoff_time",
+	).Prefix(`
+		WITH stock AS (
+			SELECT total_stock FROM product_stock WHERE product_id = ?
+		),
+		qm_metrics AS (
+			SELECT 
+				COUNT(*) AS total_contenders,
+				COUNT(*) FILTER (WHERE status = 'SOLD_OUT') AS soldout_count,
+				AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) FILTER (WHERE status = 'DECLINED') AS avg_dropoff_time,
+				COUNT(*) FILTER (WHERE status = 'DECLINED') AS dropoff_count
+			FROM queue_memberships qm
+			WHERE product_id = ?
+		),
+		rights_metrics AS (
+			SELECT 
+				COUNT(token) FILTER (WHERE status = 'USED') AS used_rights_count,
+				COUNT(token) FILTER (WHERE status = 'EXPIRED') AS expired_rights_count,
+				AVG(EXTRACT(EPOCH FROM (used_at - created_at))) FILTER (WHERE status = 'USED') AS avg_payment_time
+			FROM rights
+			WHERE product_id = ?
+		)
+	`, productID, productID, productID).
+		From("stock s").
+		LeftJoin("qm_metrics qm ON true").
+		LeftJoin("rights_metrics r ON true").
+		ToSql()
+
+	if err != nil {
+		return nil, fmt.Errorf("postgres.DurableRepo.GetProductMetrics query build: %w", err)
+	}
+
+	var metrics models.ProductMetrics
+	var avgPaymentSec, avgDropOffSec *float64
+
+	row := dr.pool.QueryRow(ctx, query, args...)
+	err = row.Scan(
+		&metrics.TotalStock,
+		&metrics.TotalContenders,
+		&metrics.UsedRightsCount,
+		&metrics.ExpiredRightsCount,
+		&metrics.SoldOutCount,
+		&metrics.DropOffCount,
+		&avgPaymentSec,
+		&avgDropOffSec,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, models.ErrProductNotFound
+		}
+		return nil, fmt.Errorf("postgres.DurableRepo.GetProductMetrics scan: %w", err)
+	}
+
+	if avgPaymentSec != nil {
+		metrics.AvgPaymentTime = new(time.Duration(*avgPaymentSec * float64(time.Second)))
+	}
+
+	if avgDropOffSec != nil {
+		metrics.AvgDropOffTime = new(time.Duration(*avgDropOffSec * float64(time.Second)))
+	}
+
+	return &metrics, nil
 }

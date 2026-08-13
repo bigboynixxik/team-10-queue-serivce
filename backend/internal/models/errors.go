@@ -2,7 +2,10 @@
 // It is completely isolated from infrastructure, transport, and external dependencies.
 package models
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Core business logic errors. These errors are returned by repositories and services,
 // and should be mapped to appropriate HTTP status codes in the transport layer.
@@ -23,6 +26,33 @@ var (
 	// ErrConcurrentJoin means another request for the same user is still deciding
 	// their entry into the queue. Retrying is safe: the claim behind it expires.
 	ErrConcurrentJoin = errors.New("concurrent join in progress")
+
+	// ErrQueueLimitReached means the user already waits in as many queues as the
+	// service allows. Leaving one of them frees a slot; retrying alone will not.
+	ErrQueueLimitReached = errors.New("active queue limit reached")
+
+	ErrProductNotFound = errors.New("product not found")
+
+	ErrInvalidRequest = errors.New("invalid request parameters")
+)
+
+// QueueLimitError reports the configured limit alongside the refusal, so the
+// client can say how many queues are allowed without hardcoding the number.
+type QueueLimitError struct {
+	Limit int
+}
+
+func (e *QueueLimitError) Error() string {
+	return fmt.Sprintf("%s: %d", ErrQueueLimitReached, e.Limit)
+}
+
+// Unwrap keeps errors.Is(err, ErrQueueLimitReached) working for callers that do
+// not care about the number.
+func (e *QueueLimitError) Unwrap() error {
+	return ErrQueueLimitReached
+}
+
+var (
 
 	// Backward-compatible aliases.
 	ErrInvalidQuantity = ErrQuantityInvalid

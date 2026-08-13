@@ -102,6 +102,21 @@ func (mr *MockDurableRepoMockRecorder) ExpireRights(ctx, tokens any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpireRights", reflect.TypeOf((*MockDurableRepo)(nil).ExpireRights), ctx, tokens)
 }
 
+// GetProductMetrics mocks base method.
+func (m *MockDurableRepo) GetProductMetrics(ctx context.Context, productID string) (*models.ProductMetrics, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetProductMetrics", ctx, productID)
+	ret0, _ := ret[0].(*models.ProductMetrics)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetProductMetrics indicates an expected call of GetProductMetrics.
+func (mr *MockDurableRepoMockRecorder) GetProductMetrics(ctx, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetProductMetrics", reflect.TypeOf((*MockDurableRepo)(nil).GetProductMetrics), ctx, productID)
+}
+
 // GetRightByToken mocks base method.
 func (m *MockDurableRepo) GetRightByToken(ctx context.Context, token string) (*models.Right, error) {
 	m.ctrl.T.Helper()
@@ -343,6 +358,21 @@ func (mr *MockCacheRepoMockRecorder) CommitPurchase(ctx, productID, quantity any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CommitPurchase", reflect.TypeOf((*MockCacheRepo)(nil).CommitPurchase), ctx, productID, quantity)
 }
 
+// CountQueueSlots mocks base method.
+func (m *MockCacheRepo) CountQueueSlots(ctx context.Context, userID string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountQueueSlots", ctx, userID)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountQueueSlots indicates an expected call of CountQueueSlots.
+func (mr *MockCacheRepoMockRecorder) CountQueueSlots(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountQueueSlots", reflect.TypeOf((*MockCacheRepo)(nil).CountQueueSlots), ctx, userID)
+}
+
 // Enqueue mocks base method.
 func (m *MockCacheRepo) Enqueue(ctx context.Context, productID, userID string) error {
 	m.ctrl.T.Helper()
@@ -434,6 +464,21 @@ func (mr *MockCacheRepoMockRecorder) GetStock(ctx, productID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStock", reflect.TypeOf((*MockCacheRepo)(nil).GetStock), ctx, productID)
 }
 
+// GetUserPresenceDeadline mocks base method.
+func (m *MockCacheRepo) GetUserPresenceDeadline(ctx context.Context, userID string) (*time.Time, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUserPresenceDeadline", ctx, userID)
+	ret0, _ := ret[0].(*time.Time)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUserPresenceDeadline indicates an expected call of GetUserPresenceDeadline.
+func (mr *MockCacheRepoMockRecorder) GetUserPresenceDeadline(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserPresenceDeadline", reflect.TypeOf((*MockCacheRepo)(nil).GetUserPresenceDeadline), ctx, userID)
+}
+
 // InitStock mocks base method.
 func (m *MockCacheRepo) InitStock(ctx context.Context, productID string, totalStock int) error {
 	m.ctrl.T.Helper()
@@ -446,6 +491,21 @@ func (m *MockCacheRepo) InitStock(ctx context.Context, productID string, totalSt
 func (mr *MockCacheRepoMockRecorder) InitStock(ctx, productID, totalStock any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitStock", reflect.TypeOf((*MockCacheRepo)(nil).InitStock), ctx, productID, totalStock)
+}
+
+// ListQueuedProducts mocks base method.
+func (m *MockCacheRepo) ListQueuedProducts(ctx context.Context, userID string) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListQueuedProducts", ctx, userID)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListQueuedProducts indicates an expected call of ListQueuedProducts.
+func (mr *MockCacheRepoMockRecorder) ListQueuedProducts(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListQueuedProducts", reflect.TypeOf((*MockCacheRepo)(nil).ListQueuedProducts), ctx, userID)
 }
 
 // MarkPurchasedIfCurrentToken mocks base method.
@@ -555,6 +615,20 @@ func (mr *MockCacheRepoMockRecorder) ReleaseMembershipClaim(ctx, productID, user
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseMembershipClaim", reflect.TypeOf((*MockCacheRepo)(nil).ReleaseMembershipClaim), ctx, productID, userID, ownerID)
 }
 
+// ReleaseQueueSlot mocks base method.
+func (m *MockCacheRepo) ReleaseQueueSlot(ctx context.Context, userID, productID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseQueueSlot", ctx, userID, productID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleaseQueueSlot indicates an expected call of ReleaseQueueSlot.
+func (mr *MockCacheRepoMockRecorder) ReleaseQueueSlot(ctx, userID, productID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseQueueSlot", reflect.TypeOf((*MockCacheRepo)(nil).ReleaseQueueSlot), ctx, userID, productID)
+}
+
 // RemoveFromExpiryTimer mocks base method.
 func (m *MockCacheRepo) RemoveFromExpiryTimer(ctx context.Context, productID, userID string) error {
 	m.ctrl.T.Helper()
@@ -609,6 +683,20 @@ func (m *MockCacheRepo) ResetExpiryTimers(ctx context.Context) error {
 func (mr *MockCacheRepoMockRecorder) ResetExpiryTimers(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetExpiryTimers", reflect.TypeOf((*MockCacheRepo)(nil).ResetExpiryTimers), ctx)
+}
+
+// ResetQueueSlots mocks base method.
+func (m *MockCacheRepo) ResetQueueSlots(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResetQueueSlots", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResetQueueSlots indicates an expected call of ResetQueueSlots.
+func (mr *MockCacheRepoMockRecorder) ResetQueueSlots(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetQueueSlots", reflect.TypeOf((*MockCacheRepo)(nil).ResetQueueSlots), ctx)
 }
 
 // RestoreAvailableUnits mocks base method.
@@ -667,6 +755,20 @@ func (mr *MockCacheRepoMockRecorder) SetRight(ctx, right any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetRight", reflect.TypeOf((*MockCacheRepo)(nil).SetRight), ctx, right)
 }
 
+// SetUserPresenceDeadline mocks base method.
+func (m *MockCacheRepo) SetUserPresenceDeadline(ctx context.Context, userID string, deadline time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetUserPresenceDeadline", ctx, userID, deadline)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetUserPresenceDeadline indicates an expected call of SetUserPresenceDeadline.
+func (mr *MockCacheRepoMockRecorder) SetUserPresenceDeadline(ctx, userID, deadline any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetUserPresenceDeadline", reflect.TypeOf((*MockCacheRepo)(nil).SetUserPresenceDeadline), ctx, userID, deadline)
+}
+
 // TryAllocate mocks base method.
 func (m *MockCacheRepo) TryAllocate(ctx context.Context, productID string, quantity int) (int, int, bool, error) {
 	m.ctrl.T.Helper()
@@ -682,6 +784,22 @@ func (m *MockCacheRepo) TryAllocate(ctx context.Context, productID string, quant
 func (mr *MockCacheRepoMockRecorder) TryAllocate(ctx, productID, quantity any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TryAllocate", reflect.TypeOf((*MockCacheRepo)(nil).TryAllocate), ctx, productID, quantity)
+}
+
+// TryOccupyQueueSlot mocks base method.
+func (m *MockCacheRepo) TryOccupyQueueSlot(ctx context.Context, userID, productID string, limit int) (bool, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TryOccupyQueueSlot", ctx, userID, productID, limit)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// TryOccupyQueueSlot indicates an expected call of TryOccupyQueueSlot.
+func (mr *MockCacheRepoMockRecorder) TryOccupyQueueSlot(ctx, userID, productID, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TryOccupyQueueSlot", reflect.TypeOf((*MockCacheRepo)(nil).TryOccupyQueueSlot), ctx, userID, productID, limit)
 }
 
 // MockAvitoClient is a mock of AvitoClient interface.

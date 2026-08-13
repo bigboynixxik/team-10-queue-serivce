@@ -14,18 +14,18 @@ import (
 
 // QueueHandler serves the queue and rights endpoints.
 type QueueHandler struct {
-	service           transport.QueueService
-	realtime          transport.RealtimeSubscriber
-	heartbeatInterval time.Duration
+	service              transport.QueueService
+	realtime             transport.RealtimeSubscriber
+	presencePingInterval time.Duration
 }
 
 // NewQueueHandler creates the handler over the service and realtime event source.
 func NewQueueHandler(
 	service transport.QueueService,
 	realtime transport.RealtimeSubscriber,
-	heartbeatInterval time.Duration,
+	presencePingInterval time.Duration,
 ) *QueueHandler {
-	return &QueueHandler{service: service, realtime: realtime, heartbeatInterval: heartbeatInterval}
+	return &QueueHandler{service: service, realtime: realtime, presencePingInterval: presencePingInterval}
 }
 
 // APIPrefix versions the public API. Everything a client calls lives behind it,
@@ -58,6 +58,9 @@ func NewRouter(h *QueueHandler, log *slog.Logger, internalToken string) http.Han
 	// mux so it stays outside UserMiddleware — the more specific pattern wins over
 	// the /queue/ prefix above.
 	mux.HandleFunc("GET "+APIPrefix+"/queue/{product_id}/stats", h.queueStats)
+
+	// Public seller analytics endpoint
+	mux.HandleFunc("GET "+APIPrefix+"/seller/products/{product_id}/metrics", h.productMetrics)
 
 	// Acts on behalf of a user, so it goes through UserMiddleware like /queue.
 	mux.Handle("GET "+APIPrefix+"/me/queues", mw.UserMiddleware(http.HandlerFunc(h.userQueues)))

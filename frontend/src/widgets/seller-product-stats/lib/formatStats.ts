@@ -1,6 +1,8 @@
 export const formatMoney = (value: number): string => `${value.toLocaleString('ru-RU')} ₽`;
 
-export const formatDuration = (seconds: number): string => {
+export const formatDuration = (seconds: number | null): string => {
+  if (seconds === null) return '—';
+
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
 
@@ -12,3 +14,6 @@ export const formatDuration = (seconds: number): string => {
 
 export const formatDeficit = (stock: number, claimants: number, coefficient: number): string =>
   `на ${stock} шт. претендуют ${claimants} чел. (×${coefficient})`;
+
+export const deficitCoefficient = (stock: number, claimants: number): number =>
+  stock > 0 ? Number((claimants / stock).toFixed(2)) : 0;

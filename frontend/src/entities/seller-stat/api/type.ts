@@ -1,20 +1,14 @@
 import { z } from 'zod';
 
 export const SellerStatsSchema = z.object({
-  product_id: z.string().min(1),
-  price: z.number().int().nonnegative(),
-  sold_out_count: z.number().int().nonnegative(),
-  lost_revenue: z.number().int().nonnegative(),
-  stock: z.number().int().positive(),
-  claimants: z.number().int().nonnegative(),
-  deficit_coefficient: z.number().nonnegative(),
-  rights_issued_unpaid: z.number().int().nonnegative(),
-  rights_issued_paid: z.number().int().nonnegative(),
-  avg_right_to_payment_seconds: z.number().int().nonnegative(),
-  left_queue_count: z.number().int().nonnegative(),
-  avg_queue_time_before_leave_seconds: z.number().int().nonnegative(),
+  total_stock: z.number().int().nonnegative(),
+  total_contenders: z.number().int().nonnegative(),
+  used_rights_count: z.number().int().nonnegative(),
+  expired_rights_count: z.number().int().nonnegative(),
+  soldout_count: z.number().int().nonnegative(),
+  dropoff_count: z.number().int().nonnegative(),
+  avg_payment_time: z.number().int().nonnegative().nullable(),
+  avg_dropoff_time: z.number().int().nonnegative().nullable(),
 });
-
-export const SellerStatsListSchema = z.array(SellerStatsSchema);
 
 export type SellerStats = z.infer<typeof SellerStatsSchema>;

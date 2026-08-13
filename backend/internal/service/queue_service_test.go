@@ -62,6 +62,16 @@ func (s *QueueServiceTestSuite) mockJoinQueueBase(stock, reqQty, alloc, avail in
 	s.mockCache.EXPECT().ReleaseMembershipClaim(
 		gomock.Any(), "prod-1", "user-1", gomock.Any(),
 	).Return(nil)
+
+	// The queue slot is taken before AvitoBackend is contacted, and given back
+	// when the entry does not complete. Cases that fail mid-join rely on that
+	// release, so it is allowed rather than required here.
+	s.mockCache.EXPECT().TryOccupyQueueSlot(
+		s.ctx, "user-1", "prod-1", gomock.Any(),
+	).Return(true, true, nil)
+	s.mockCache.EXPECT().ReleaseQueueSlot(gomock.Any(), "user-1", "prod-1").
+		Return(nil).AnyTimes()
+
 	s.mockAvito.EXPECT().GetInitialStock(s.ctx, "prod-1").Return(stock, nil)
 	s.mockCache.EXPECT().InitStock(s.ctx, "prod-1", stock).Return(nil)
 
@@ -76,9 +86,15 @@ func (s *QueueServiceTestSuite) mockSyncCacheState(status models.MembershipStatu
 		s.mockCache.EXPECT().SetRight(s.ctx, gomock.Any()).Return(nil)
 	}
 	s.mockCache.EXPECT().SetMembership(s.ctx, gomock.Any()).Return(nil)
-	if expectTimer {
+	if expectTimer || status == models.MembershipStatusQueued {
 		var timerMatcher gomock.Matcher = gomock.Any()
 		if status == models.MembershipStatusRightActive {
+			earliest := time.Now().UTC().Add(3*time.Minute + 59*time.Second)
+			latest := time.Now().UTC().Add(4*time.Minute + time.Second)
+			timerMatcher = gomock.Cond(func(deadline time.Time) bool {
+				return !deadline.Before(earliest) && !deadline.After(latest)
+			})
+		} else if status == models.MembershipStatusQueued {
 			earliest := time.Now().UTC().Add(29 * time.Second)
 			latest := time.Now().UTC().Add(31 * time.Second)
 			timerMatcher = gomock.Cond(func(deadline time.Time) bool {
@@ -138,6 +154,31 @@ func (s *QueueServiceTestSuite) expectMembershipClaim(productID, userID string) 
 	s.mockCache.EXPECT().ReleaseMembershipClaim(
 		gomock.Any(), productID, userID, gomock.Any(),
 	).Return(nil)
+}
+
+// newServiceWithQueueLimit builds a service that differs from the suite one only
+// in how many queues a user may occupy.
+func (s *QueueServiceTestSuite) newServiceWithQueueLimit(limit int) *service.QueueService {
+	return service.NewQueueService(
+		s.mockDurable,
+		s.mockCache,
+		s.mockAvito,
+		2*time.Minute,
+		4*time.Minute,
+		75*time.Second,
+		30*time.Second,
+		service.WithMaxActiveQueues(limit),
+	)
+}
+
+// expectFreshQueueSlot grants a new queue slot and requires it to be given back:
+// these callers all fail before a membership exists, so the slot they took must
+// not survive the attempt.
+func (s *QueueServiceTestSuite) expectFreshQueueSlot(productID, userID string) {
+	s.mockCache.EXPECT().TryOccupyQueueSlot(
+		s.ctx, userID, productID, gomock.Any(),
+	).Return(true, true, nil)
+	s.mockCache.EXPECT().ReleaseQueueSlot(gomock.Any(), userID, productID).Return(nil)
 }
 
 // mockAcceptOfferFetch is mockMembershipFetch plus the membership claim that

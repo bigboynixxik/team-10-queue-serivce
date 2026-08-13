@@ -58,6 +58,8 @@ tags:
     description: Публичные показатели спроса на товар
   - name: me
     description: Очереди текущего пользователя
+  - name: seller
+    description: Аналитика и метрики для продавцов
   - name: infra
     description: Инфраструктурный контроль работоспособности
 
@@ -96,10 +98,17 @@ paths:
         (`docs/design_context.md`, п. 5.2).
 
 
+        Входу предшествует проверка числа очередей, в которых пользователь уже
+        состоит. При исчерпании допустимого числа запрос отклоняется кодом `409`
+        с телом `queue_limit_reached` прежде, чем будет затронут остаток товара.
+        Повторный вход в очередь, где пользователь уже состоит, ограничением не
+        затрагивается (`docs/design_context.md`, п. 5.3).
+
+
         Повторный вызов при наличии действующего членства (`QUEUED`,
         `RIGHT_ACTIVE`, `OFFER_PENDING`) идемпотентен: возвращается текущее
         состояние без изменений, вторая позиция в очереди не создаётся
-        (`docs/design_context.md`, п. 5.3).
+        (`docs/design_context.md`, п. 5.4).
 
 
         Параллельные вызовы от одного пользователя разрешаются исключительной
@@ -164,17 +173,29 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           description: >
-            Товар исчерпан либо параллельный запрос того же пользователя не
-            завершился за отведённое время ожидания. В первом случае тело
-            содержит `status: SOLD_OUT`, и состояние является терминальным,
-            поскольку восполнение остатка находится за пределами области MVP; во
-            втором тело пустое и запрос допускает повтор.
+            Товар исчерпан, исчерпано допустимое число одновременных очередей
+            либо параллельный запрос того же пользователя не завершился за
+            отведённое время ожидания. Исходы различаются телом ответа: первый
+            содержит `status: SOLD_OUT` и является терминальным, поскольку
+            восполнение остатка находится за пределами области MVP; второй
+            содержит поле `error` и требует выхода из любой занятой очереди;
+            третий имеет пустое тело и допускает повтор запроса.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SoldOut'
-              example:
-                status: SOLD_OUT
+                oneOf:
+                  - $ref: '#/components/schemas/SoldOut'
+                  - $ref: '#/components/schemas/QueueLimitReached'
+              examples:
+                sold_out:
+                  summary: Товар исчерпан
+                  value:
+                    status: SOLD_OUT
+                queue_limit_reached:
+                  summary: Исчерпано допустимое число одновременных очередей
+                  value:
+                    error: queue_limit_reached
+                    limit: 5
 
   /queue/{product_id}/stats:
     get:
@@ -275,11 +296,8 @@ paths:
 
         Особенности режима WebSocket. Соединение закрывается сервером при
         переходе членства в терминальное состояние (`PURCHASED`, `DECLINED`,
-        `SOLD_OUT`). С периодичностью `RIGHT_HEARTBEAT_INTERVAL` сервер
-        отправляет управляющий кадр `Ping`; успешный ответ клиента продлевает
-        краткосрочную аренду действующего права. Отсутствие подтверждения в
-        течение `RIGHT_HEARTBEAT_TIMEOUT` приводит к досрочному освобождению
-        права, не дожидаясь исчерпания полного срока его действия.
+        `SOLD_OUT`). Этот товарный канал предназначен только для доставки
+        обновлений и не управляет сроком действия предложения или права.
       x-websocket: true
       parameters:
         - $ref: '#/components/parameters/ProductId'
@@ -729,6 +747,35 @@ paths:
               example:
                 status: SOLD_OUT
 
+  /seller/products/{product_id}/metrics:
+    get:
+      tags: [seller]
+      operationId: getProductMetrics
+      summary: Показатели аналитики для продавца
+      description: >
+        Отдельная конечная точка для предоставления исторической аналитики продавцам.
+        Позволяет оценить уровень спроса, конверсию выданных прав, количество отказов
+        (включая исчерпание товара и упущенную выгоду), а также временные метрики поведения
+        покупателей.
+
+
+        Аутентификация продавца вынесена за пределы кейса MVP, поэтому
+        конечная точка доступна без проверки токена (security: []).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Агрегированные аналитические метрики по товару
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductMetrics'
+        '404':
+          description: >
+            Товар сервису неизвестен: очередь по нему ни разу не создавалась,
+            локальное состояние отсутствует.
+
   /healthz:
     get:
       tags: [infra]
@@ -940,3 +987,68 @@ components:
         status:
           type: string
           enum: [SOLD_OUT]
+
+    ProductMetrics:
+      type: object
+      description: >
+        Агрегированные аналитические показатели по товару для дашборда продавца.
+      required:
+        - total_stock
+        - total_contenders
+        - used_rights_count
+        - expired_rights_count
+        - soldout_count
+        - dropoff_count
+        - avg_payment_time
+        - avg_dropoff_time
+      properties:
+        total_stock:
+          type: integer
+          description: Исходное количество товара, заявленное к продаже.
+        total_contenders:
+          type: integer
+          description: Общее число уникальных пользователей, попытавшихся приобрести товар (нажавших кнопку покупки).
+        used_rights_count:
+          type: integer
+          description: Количество прав на покупку, по которым была успешно завершена оплата.
+        expired_rights_count:
+          type: integer
+          description: Количество прав, выданных пользователям, но не оплаченных до истечения срока.
+        soldout_count:
+          type: integer
+          description: Количество пользователей, до которых дошла очередь, но физический остаток товара оказался равен нулю.
+        dropoff_count:
+          type: integer
+          description: Количество пользователей, покинувших очередь до получения права на покупку.
+        avg_payment_time:
+          type: integer
+          description: Среднее время (в секундах), затраченное пользователями на ввод платежных данных.
+        avg_dropoff_time:
+          type: integer
+          description: Среднее время (в секундах), проведенное в очереди пользователями до добровольного отказа.
+      example:
+        total_stock: 10
+        total_contenders: 200
+        used_rights_count: 8
+        expired_rights_count: 2
+        soldout_count: 145
+        dropoff_count: 45
+        avg_payment_time: 75
+        avg_dropoff_time: 120
+    QueueLimitReached:
+      type: object
+      description: >
+        Отказ во входе: пользователь уже участвует в предельном числе очередей.
+        Учитываются только действующие членства; состояния `PURCHASED`,
+        `DECLINED` и `SOLD_OUT` места не занимают.
+      required: [error, limit]
+      properties:
+        error:
+          type: string
+          enum: [queue_limit_reached]
+        limit:
+          type: integer
+          description: >
+            Действующее ограничение. Передаётся для того, чтобы клиентское
+            приложение сообщало значение, не располагая настройками сервиса.
+          example: 5

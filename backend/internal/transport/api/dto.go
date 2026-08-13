@@ -119,6 +119,18 @@ func newRightResponse(r *models.Right) membershipResponse {
 	}
 }
 
+// queueLimitReachedCode identifies the refusal in the body, since the queue
+// limit and SOLD_OUT share the same 409 status.
+const queueLimitReachedCode = "queue_limit_reached"
+
+// queueLimitResponse is the body of a 409 caused by the per-user queue limit.
+// The limit itself is included so the client can state it without knowing the
+// server configuration.
+type queueLimitResponse struct {
+	Error string `json:"error"`
+	Limit int    `json:"limit"`
+}
+
 // statsResponse is the body of GET /api/v1/queue/{product_id}/stats. All fields
 // are always present — a zero is meaningful here, unlike in membershipResponse
 // where an absent field means "not applicable to this status".
@@ -142,4 +154,40 @@ func newStatsResponse(s *models.QueueStats) statsResponse {
 		Available:    s.Available,
 		ProductCount: s.ProductCount,
 	}
+}
+
+// productMetricsResponse defines the JSON structure for seller analytics.
+type productMetricsResponse struct {
+	TotalStock         int  `json:"total_stock"`
+	TotalContenders    int  `json:"total_contenders"`
+	UsedRightsCount    int  `json:"used_rights_count"`
+	ExpiredRightsCount int  `json:"expired_rights_count"`
+	SoldOutCount       int  `json:"soldout_count"`
+	DropOffCount       int  `json:"dropoff_count"`
+	AvgPaymentTime     *int `json:"avg_payment_time"`
+	AvgDropOffTime     *int `json:"avg_dropoff_time"`
+}
+
+// newProductMetricsResponse converts the domain model into the transport DTO.
+func newProductMetricsResponse(m *models.ProductMetrics) productMetricsResponse {
+	resp := productMetricsResponse{
+		TotalStock:         m.TotalStock,
+		TotalContenders:    m.TotalContenders,
+		UsedRightsCount:    m.UsedRightsCount,
+		ExpiredRightsCount: m.ExpiredRightsCount,
+		SoldOutCount:       m.SoldOutCount,
+		DropOffCount:       m.DropOffCount,
+	}
+
+	if m.AvgPaymentTime != nil {
+		resp.AvgPaymentTime = new(int)
+		*resp.AvgPaymentTime = int(m.AvgPaymentTime.Seconds())
+	}
+
+	if m.AvgDropOffTime != nil {
+		resp.AvgDropOffTime = new(int)
+		*resp.AvgDropOffTime = int(m.AvgDropOffTime.Seconds())
+	}
+
+	return resp
 }

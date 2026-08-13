@@ -1,17 +1,14 @@
-import { NotFoundError } from '@shared/api';
+import { HttpClient } from '@shared/api';
 
-import statsJson from './mocks/stats.json';
-import { type SellerStats, SellerStatsListSchema } from './type';
+import { type SellerStats, SellerStatsSchema } from './type';
 
-class SellerStatsApi {
-  private readonly stats = SellerStatsListSchema.parse(statsJson);
+class SellerStatsApi extends HttpClient {
+  constructor() {
+    super('seller/products');
+  }
 
   public async byProductId(productId: string): Promise<SellerStats> {
-    const stats = this.stats.find((item) => item.product_id === productId);
-
-    if (!stats) throw new NotFoundError('Статистика не найдена');
-
-    return stats;
+    return SellerStatsSchema.parse(await this.get<unknown>({ uri: `/${productId}/metrics` }));
   }
 }
 
