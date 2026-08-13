@@ -59,6 +59,9 @@ func NewRouter(h *QueueHandler, log *slog.Logger, internalToken string) http.Han
 	// the /queue/ prefix above.
 	mux.HandleFunc("GET "+APIPrefix+"/queue/{product_id}/stats", h.queueStats)
 
+	// Public seller analytics endpoint
+	mux.HandleFunc("GET "+APIPrefix+"/seller/products/{product_id}/metrics", h.productMetrics)
+
 	// Acts on behalf of a user, so it goes through UserMiddleware like /queue.
 	mux.Handle("GET "+APIPrefix+"/me/queues", mw.UserMiddleware(http.HandlerFunc(h.userQueues)))
 
