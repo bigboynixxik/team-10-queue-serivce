@@ -25,5 +25,7 @@ describe('formatStats', () => {
   test('computes deficit coefficient', () => {
     expect(deficitCoefficient(10, 200)).toBe(20);
     expect(deficitCoefficient(0, 200)).toBe(0);
+    expect(deficitCoefficient(3, 2)).toBe(0.67);
+    expect(deficitCoefficient(2, 3)).toBe(1.5);
   });
 });

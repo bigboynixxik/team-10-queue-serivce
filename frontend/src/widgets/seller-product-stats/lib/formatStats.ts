@@ -16,4 +16,4 @@ export const formatDeficit = (stock: number, claimants: number, coefficient: num
   `на ${stock} шт. претендуют ${claimants} чел. (×${coefficient})`;
 
 export const deficitCoefficient = (stock: number, claimants: number): number =>
-  stock > 0 ? claimants / stock : 0;
+  stock > 0 ? Number((claimants / stock).toFixed(2)) : 0;
