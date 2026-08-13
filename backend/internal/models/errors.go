@@ -30,6 +30,8 @@ var (
 	// ErrQueueLimitReached means the user already waits in as many queues as the
 	// service allows. Leaving one of them frees a slot; retrying alone will not.
 	ErrQueueLimitReached = errors.New("active queue limit reached")
+
+	ErrProductNotFound = errors.New("product not found")
 )
 
 // QueueLimitError reports the configured limit alongside the refusal, so the
