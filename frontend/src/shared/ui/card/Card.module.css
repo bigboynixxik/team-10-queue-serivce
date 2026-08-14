@@ -1,0 +1,42 @@
+.Card {
+  overflow: hidden;
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  gap: 20px;
+  cursor: pointer;
+}
+
+.Card__content {
+  display: flex;
+  height: 100%;
+  flex: 1;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.Card__cover > img {
+  border-radius: 50px;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+.Card__title {
+  margin: 0;
+  font-size: 25px;
+  transition: opacity 150ms ease;
+}
+
+.Card__description {
+  margin: 0;
+  color: var(--muted);
+  transition: opacity 150ms ease;
+}
+
+.Card:hover .Card__title,
+.Card:hover .Card__description,
+.Card:hover .Card__content {
+  opacity: 0.6;
+}

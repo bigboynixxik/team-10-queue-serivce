@@ -1,0 +1,45 @@
+.QuantityStepper {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 4px;
+  background: var(--surface);
+}
+
+.QuantityStepper__button {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    opacity 150ms ease;
+}
+
+.QuantityStepper__button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--brand), transparent 90%);
+}
+
+.QuantityStepper__button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.QuantityStepper__value {
+  min-width: 32px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}

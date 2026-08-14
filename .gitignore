@@ -9,3 +9,16 @@
 
 .idea/
 *.env
+
+# frontend
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+
+.DS_Store
+
+# Скриншоты и заметки, не относящиеся к коду
+imgs/

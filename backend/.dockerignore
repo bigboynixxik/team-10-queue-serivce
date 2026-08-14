@@ -1,0 +1,13 @@
+.git
+.gitignore
+.idea/
+.vscode/
+*.iml
+*.md
+
+.env
+.env.*
+
+/bin/
+/build/
+vendor/

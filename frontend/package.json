@@ -1,0 +1,47 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "",
+  "type": "module",
+  "scripts": {
+    "dev": "rsbuild dev",
+    "build": "rsbuild build",
+    "preview": "rsbuild preview",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "lint:fsd": "CHOKIDAR_USEPOLLING=true steiger ./src",
+    "typecheck": "tsc --noEmit",
+    "test": "rstest",
+    "test:watch": "rstest -w",
+    "test:coverage": "rstest --coverage"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "axios": "^1.19.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
+    "zod": "^3.25.76",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
+    "@feature-sliced/steiger-plugin": "^0.7.0",
+    "@rsbuild/core": "^2.1.9",
+    "@rsbuild/plugin-react": "^2.1.0",
+    "@rstest/adapter-rsbuild": "^0.11.6",
+    "@rstest/core": "^0.11.6",
+    "@rstest/coverage-istanbul": "^0.11.6",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "happy-dom": "^20.11.2",
+    "steiger": "^0.6.0",
+    "typescript": "^5.9.3"
+  }
+}

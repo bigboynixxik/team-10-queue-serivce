@@ -1,0 +1,31 @@
+.Stack {
+  display: flex;
+  align-items: center;
+  gap: var(--stack-gap);
+}
+
+.Stack--wrap {
+  flex-wrap: wrap;
+}
+
+.Stack--block {
+  width: 100%;
+}
+
+.Stack--compact {
+  gap: 0;
+}
+
+.Stack--compact > :first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.Stack--compact > :last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.Stack--compact > * {
+  flex: 1;
+}

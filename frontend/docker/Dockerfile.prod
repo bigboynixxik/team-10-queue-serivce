@@ -1,0 +1,24 @@
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+# rsbuild inlines PUBLIC_* variables into the bundle at build time, so the API
+# address is fixed here and cannot be changed by the running container.
+ARG PUBLIC_API_BASE_URL=/api
+ARG PUBLIC_CHECKOUT_BASE_URL=http://localhost:9090
+ENV PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL}
+ENV PUBLIC_CHECKOUT_BASE_URL=${PUBLIC_CHECKOUT_BASE_URL}
+
+RUN npm run build
+
+FROM nginx:1.27-alpine
+
+COPY nginx/templates/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80

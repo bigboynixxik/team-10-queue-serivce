@@ -1,0 +1,10 @@
+---
+- name: Install htop
+  hosts: servers
+  become: true
+  tasks:
+    - name: Install htop package
+      ansible.builtin.apt:
+        name: htop
+        state: present
+        update_cache: true

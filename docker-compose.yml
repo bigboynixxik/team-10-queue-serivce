@@ -1,0 +1,109 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    env_file: backend/.env
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+      args:
+        CMD: api
+    image: queue-service:local
+    container_name: queue-service
+    restart: unless-stopped
+    env_file: backend/.env
+    environment:
+      APP_PORT: "8080"
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      avitomock:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # Stands in for the external Avito system: owns the physical stock and hosts
+  # the checkout page. Out of scope of the case, but the journey needs somewhere
+  # to pay (docs/design_context.md, п. 7).
+  avitomock:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+      args:
+        CMD: avitomock
+    image: avito-mock:local
+    container_name: avito-mock
+    restart: unless-stopped
+    env_file: backend/.env
+    environment:
+      PORT: "9090"
+      QUEUE_BASE_URL: http://backend:8080
+    ports:
+      - "${AVITO_MOCK_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 3s
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: docker/Dockerfile.prod
+      args:
+        # Baked into the bundle: the browser talks to nginx, never to :8080.
+        PUBLIC_API_BASE_URL: /api/v1
+        PUBLIC_CHECKOUT_BASE_URL: ${PUBLIC_CHECKOUT_BASE_URL:-http://localhost:9090}
+    image: queue-frontend:local
+    container_name: queue-frontend
+    restart: unless-stopped
+    environment:
+      # Substituted into nginx/templates/default.conf.template on startup.
+      BACKEND_ORIGIN: http://backend:8080
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  pgdata:
+  redisdata:

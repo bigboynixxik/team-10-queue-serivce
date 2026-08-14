@@ -1,0 +1,1054 @@
+openapi: 3.0.3
+info:
+  title: Queue Service API
+  description: >
+    Прикладной интерфейс сервиса очереди на приобретение товара ограниченной
+    доступности (кейс хакатона Авито «Авито Очередь»).
+
+
+    Документ описывает исключительно конечные точки Queue Service. Внешняя
+    система AvitoBackend — оформление заказа, проведение оплаты, хранение
+    физического остатка — находится вне области кейса и здесь не описывается.
+    Обоснование принятых решений приведено в `docs/design_context.md`, потоки
+    сообщений — в `docs/diagrams.md`.
+
+
+    Полноценная аутентификация вынесена за пределы кейса требованием `FR-D1`.
+    Идентификатор пользователя передаётся заголовком `X-User-Id`. Для каналов
+    WebSocket и Server-Sent Events, где браузерные конструкторы `WebSocket` и
+    `EventSource` не позволяют задавать заголовки, предусмотрен параметр запроса
+    `user_id`. Приоритет сохраняется за заголовком. В промышленной эксплуатации
+    идентификатор извлекался бы из сессии, а не из запроса.
+
+
+    Служебные конечные точки `POST /internal/rights/{token}/validate` и
+    `POST /rights/{token}/events` вызываются внешней системой AvitoBackend и
+    защищены разделяемым секретом в заголовке `X-Internal-Token`. Пустое
+    значение секрета в конфигурации отключает проверку, что допустимо
+    исключительно при локальной разработке.
+
+
+    Интерфейс спроектирован в стиле REST: ресурсы именуются существительными
+    (`members`, `rights`), действие определяется методом HTTP, а не глаголом в
+    пути.
+
+
+    Защита от обхода очереди построена на двух рубежах. Клиентский рубеж —
+    `GET /rights/{token}`, вызываемый браузером перед обращением к AvitoBackend:
+    он отсекает недействительные попытки и тем снимает нагрузку с конечной точки
+    оформления заказа. Границей доверия служит второй рубеж —
+    `POST /internal/rights/{token}/validate`, вызываемый самой AvitoBackend перед
+    созданием заказа; пропустить его браузер не может.
+  version: "1.0.0"
+
+servers:
+  - url: /api/v1
+    description: >
+      Клиентские конечные точки размещены под версионированным префиксом.
+      Единственное исключение — `/healthz`: конечная точка относится к
+      инфраструктурному контролю работоспособности, а не к прикладному
+      интерфейсу, и не должна нарушаться при смене версии.
+
+tags:
+  - name: queue
+    description: Членство пользователя в очереди на товар
+  - name: rights
+    description: Выданные права на покупку
+  - name: stats
+    description: Публичные показатели спроса на товар
+  - name: me
+    description: Очереди текущего пользователя
+  - name: seller
+    description: Аналитика и метрики для продавцов
+  - name: infra
+    description: Инфраструктурный контроль работоспособности
+
+security:
+  - UserHeader: []
+
+paths:
+  /queue/{product_id}/members:
+    post:
+      tags: [queue]
+      operationId: joinQueue
+      summary: Встать в очередь на товар
+      description: >
+        Обрабатывает нажатие кнопки покупки на странице товара с указанием
+        желаемого количества. Сервис сопоставляет запрошенное количество с
+        числом единиц, свободных для выдачи в текущий момент (`available_units`,
+        то есть физический остаток за вычетом удержанного действующими правами и
+        предложениями), и выполняет один из четырёх переходов конечного автомата.
+
+
+        | Условие | Результат |
+        | --- | --- |
+        | `product_count == 0` | `SOLD_OUT` — код `409`, товар исчерпан |
+        | Очередь непуста | `QUEUED` — помещение в конец очереди FIFO |
+        | `available_units >= quantity` | `RIGHT_ACTIVE` — право выдано на всё запрошенное количество |
+        | `0 < available_units < quantity` | `OFFER_PENDING` — частичное предложение на `available_quantity` единиц |
+        | `available_units == 0` | `QUEUED` — помещение в конец очереди FIFO |
+
+
+        Условия проверяются в указанном порядке единственным сценарием Lua в
+        Redis, то есть решение принимается атомарно. Проверка непустоты очереди
+        входит в тот же шаг: при наличии ожидающих участников вновь пришедший
+        становится в конец очереди, даже если свободные единицы имеются, —
+        иначе он получил бы единицу, принадлежащую голове очереди. Порядок FIFO
+        является единственной политикой справедливости
+        (`docs/design_context.md`, п. 5.2).
+
+
+        Входу предшествует проверка числа очередей, в которых пользователь уже
+        состоит. При исчерпании допустимого числа запрос отклоняется кодом `409`
+        с телом `queue_limit_reached` прежде, чем будет затронут остаток товара.
+        Повторный вход в очередь, где пользователь уже состоит, ограничением не
+        затрагивается (`docs/design_context.md`, п. 5.3).
+
+
+        Повторный вызов при наличии действующего членства (`QUEUED`,
+        `RIGHT_ACTIVE`, `OFFER_PENDING`) идемпотентен: возвращается текущее
+        состояние без изменений, вторая позиция в очереди не создаётся
+        (`docs/design_context.md`, п. 5.4).
+
+
+        Параллельные вызовы от одного пользователя разрешаются исключительной
+        блокировкой членства: решение принимает один запрос, остальные ожидают
+        его результата и возвращают то же состояние. Если ожидание не
+        завершилось результатом, возвращается код `409`.
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 1
+                  description: >
+                    Запрашиваемое количество единиц товара. Значение, меньшее
+                    либо равное нулю, отклоняется кодом `400`. Верхняя граница не
+                    проверяется: запрос, превышающий доступное количество,
+                    приводит к частичному предложению либо к постановке в
+                    очередь, а не к ошибке.
+            example:
+              quantity: 5
+      responses:
+        '201':
+          description: >
+            Членство создано. Конкретный исход определяется полем `status`.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/RightActive'
+                  - $ref: '#/components/schemas/OfferPending'
+                  - $ref: '#/components/schemas/Queued'
+              examples:
+                right_active:
+                  summary: Доступного количества достаточно
+                  value:
+                    status: RIGHT_ACTIVE
+                    token: 9f3a1c7e-58d2-4a11-9f0b-2c6d4e7a1b83
+                    expires_at: "2026-08-09T12:15:00Z"
+                    quantity: 5
+                offer_pending:
+                  summary: Доступно меньше запрошенного
+                  value:
+                    status: OFFER_PENDING
+                    quantity: 5
+                    available_quantity: 3
+                    expires_at: "2026-08-09T12:13:00Z"
+                queued:
+                  summary: Свободных единиц нет, товар не исчерпан
+                  value:
+                    status: QUEUED
+                    quantity: 5
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: >
+            Товар исчерпан, исчерпано допустимое число одновременных очередей
+            либо параллельный запрос того же пользователя не завершился за
+            отведённое время ожидания. Исходы различаются телом ответа: первый
+            содержит `status: SOLD_OUT` и является терминальным, поскольку
+            восполнение остатка находится за пределами области MVP; второй
+            содержит поле `error` и требует выхода из любой занятой очереди;
+            третий имеет пустое тело и допускает повтор запроса.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SoldOut'
+                  - $ref: '#/components/schemas/QueueLimitReached'
+              examples:
+                sold_out:
+                  summary: Товар исчерпан
+                  value:
+                    status: SOLD_OUT
+                queue_limit_reached:
+                  summary: Исчерпано допустимое число одновременных очередей
+                  value:
+                    error: queue_limit_reached
+                    limit: 5
+
+  /queue/{product_id}/stats:
+    get:
+      tags: [stats]
+      operationId: getQueueStats
+      summary: Показатели спроса на товар
+      description: >
+        Публичная конечная точка: число ожидающих, число находящихся в процессе
+        покупки и остаток товара.
+
+
+        Ответ адресован двум категориям читателей одновременно. Продавцу он
+        показывает, оправдано ли восполнение остатка; покупателю — что ожидание
+        обусловлено реальным спросом, а не произвольным решением системы
+        (`UR-1`).
+
+
+        Аутентификация не требуется намеренно: ответ содержит исключительно
+        агрегированные счётчики без идентификаторов пользователей (`FR-D1`).
+
+
+        Счётчики по состояниям читаются из PostgreSQL, остаток — из Redis,
+        вследствие чего под нагрузкой две половины ответа могут разойтись на
+        краткий интервал. Это допустимо: на результате не принимается ни одного
+        решения, а выдача права остаётся атомарной операцией в Redis.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Текущие показатели спроса
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [waiting, holding_right, pending_offer, available, product_count]
+                properties:
+                  waiting:
+                    type: integer
+                    description: Число участников в состоянии `QUEUED`
+                  holding_right:
+                    type: integer
+                    description: Число участников в состоянии `RIGHT_ACTIVE`
+                  pending_offer:
+                    type: integer
+                    description: Число участников в состоянии `OFFER_PENDING`
+                  available:
+                    type: integer
+                    description: >
+                      Число единиц, свободных для выдачи в текущий момент. Меньше
+                      физического остатка: единицы, удерживаемые действующими
+                      правами и предложениями, не учитываются.
+                  product_count:
+                    type: integer
+                    description: >
+                      Физический остаток — локальное зеркало значения AvitoBackend.
+              example:
+                waiting: 47
+                holding_right: 2
+                pending_offer: 1
+                available: 0
+                product_count: 3
+        '404':
+          description: >
+            Товар сервису неизвестен: очередь по нему ни разу не создавалась,
+            локальное состояние отсутствует.
+
+  /queue/{product_id}/members/me:
+    get:
+      tags: [queue]
+      operationId: getMembership
+      summary: Текущее состояние членства
+      description: >
+        Ресурс формирует ответ в одном из трёх представлений в зависимости от
+        заголовков запроса:
+
+
+        - обычный запрос — документ JSON с текущим состоянием;
+
+        - заголовок `Upgrade: websocket` — канал WebSocket, по которому сервер
+        передаёт то же тело при каждом изменении состояния;
+
+        - заголовок `Accept: text/event-stream` — поток Server-Sent Events, в
+        котором то же тело передаётся событиями `update`.
+
+
+        Выделение отдельных путей под каждый транспорт не выполняется: одно
+        состояние — один ресурс, различаются лишь представления. Добавление
+        Server-Sent Events не нарушило работу ранее подключённых клиентов
+        WebSocket.
+
+
+        В состоянии `QUEUED` ответ дополняется полями `position` (позиция в
+        очереди, отсчёт с единицы) и `eta_seconds` (прогнозируемое время
+        ожидания). В прочих состояниях поля отсутствуют: обладатель права в
+        очереди не состоит, и сообщение о его позиции было бы недостоверным.
+
+
+        Особенности режима WebSocket. Соединение закрывается сервером при
+        переходе членства в терминальное состояние (`PURCHASED`, `DECLINED`,
+        `SOLD_OUT`). Этот товарный канал предназначен только для доставки
+        обновлений и не управляет сроком действия предложения или права.
+      x-websocket: true
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+        - name: Upgrade
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [websocket]
+          description: Наличие заголовка переключает соединение в режим WebSocket.
+        - name: Accept
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [text/event-stream]
+          description: >
+            Наличие значения `text/event-stream` переключает ответ в режим
+            Server-Sent Events. Объект `EventSource` устанавливает заголовок
+            самостоятельно.
+        - $ref: '#/components/parameters/UserIdQuery'
+      responses:
+        '200':
+          description: >
+            Текущее состояние членства либо очередное сообщение в режимах
+            реального времени. Конкретный вариант определяется полем `status`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+              examples:
+                right_active:
+                  summary: Право действует
+                  value:
+                    status: RIGHT_ACTIVE
+                    token: 9f3a1c7e-58d2-4a11-9f0b-2c6d4e7a1b83
+                    expires_at: "2026-08-09T12:20:00Z"
+                    quantity: 5
+                offer_pending:
+                  summary: Доступно меньше запрошенного, ожидается решение
+                  value:
+                    status: OFFER_PENDING
+                    quantity: 5
+                    available_quantity: 3
+                    expires_at: "2026-08-09T12:13:00Z"
+                queued:
+                  summary: Ожидание выдачи права либо предложения
+                  value:
+                    status: QUEUED
+                    quantity: 5
+                    position: 3
+                    eta_seconds: 225
+                sold_out:
+                  summary: Товар исчерпан за время ожидания
+                  value:
+                    status: SOLD_OUT
+                    quantity: 5
+                declined:
+                  summary: Отказ от предложения либо истечение срока
+                  value:
+                    status: DECLINED
+                    quantity: 5
+                purchased:
+                  summary: Право оплачено и использовано — терминальное состояние
+                  value:
+                    status: PURCHASED
+                    quantity: 5
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: update
+                data: {"status":"QUEUED","quantity":5,"position":3,"eta_seconds":225}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >
+            Членство отсутствует: пользователь ни разу не выполнял `POST` для
+            данного товара.
+
+    patch:
+      tags: [queue]
+      operationId: acceptOffer
+      summary: Принять частичное предложение
+      description: >
+        Применимо исключительно в состоянии `OFFER_PENDING`. Переводит членство в
+        `RIGHT_ACTIVE` с указанным количеством и выдаёт новое право.
+
+
+        Неиспользованный остаток (`available_quantity - quantity`) немедленно
+        возвращается в общий пул, после чего выполняется продвижение очереди:
+        если возвращённого количества достаточно следующему участнику, он
+        получает право либо частичное предложение без дополнительного ожидания.
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 1
+                  description: >
+                    Принимаемое количество, от единицы до `available_quantity`
+                    выданного предложения.
+            example:
+              quantity: 2
+      responses:
+        '200':
+          description: Право выдано на указанное количество
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RightActive'
+              example:
+                status: RIGHT_ACTIVE
+                token: 9f3a1c7e-58d2-4a11-9f0b-2c6d4e7a1b83
+                expires_at: "2026-08-09T12:20:00Z"
+                quantity: 2
+        '400':
+          description: >
+            Значение `quantity` меньше либо равно нулю или превышает
+            `available_quantity` выданного предложения.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >
+            Членство отсутствует либо срок предложения истёк к моменту обращения.
+        '409':
+          description: >
+            Членство находится в состоянии, отличном от `OFFER_PENDING`, либо
+            параллельный вызов того же пользователя не завершился за отведённое
+            время ожидания. Параллельные принятия одного предложения
+            сериализуются исключительной блокировкой членства: право выдаётся
+            однократно, и повторное нажатие возвращает уже выданное право.
+
+    delete:
+      tags: [queue]
+      operationId: leaveQueue
+      summary: Прекратить участие в очереди
+      description: >
+        Досрочно завершает участие пользователя в механике для данного товара.
+        Применимо в состояниях `QUEUED`, `OFFER_PENDING` и `RIGHT_ACTIVE`;
+        членство переводится в терминальное состояние `DECLINED`.
+
+
+        Последствия зависят от исходного состояния. Из состояния `QUEUED`
+        пользователь исключается из очереди FIFO. Из состояния `OFFER_PENDING`
+        удержанное количество полностью возвращается в пул, после чего очередь
+        продвигается. Из состояния `RIGHT_ACTIVE` право переводится в `EXPIRED`
+        в рамках транзакции PostgreSQL, а удерживаемое им количество
+        возвращается в пул.
+
+
+        Клиентское приложение использует метод как для явного отказа от
+        частичного предложения, так и для добровольного выхода из очереди.
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '204':
+          description: Участие прекращено
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >
+            Членство отсутствует либо срок действия права или предложения истёк
+            к моменту обращения.
+        '409':
+          description: >
+            Членство уже находится в терминальном состоянии (`PURCHASED`,
+            `DECLINED`, `SOLD_OUT`) либо параллельный вызов того же пользователя
+            удерживает исключительную блокировку членства.
+
+  /me/queues:
+    get:
+      tags: [me]
+      operationId: listUserQueues
+      summary: Очереди текущего пользователя
+      description: >
+        Перечень всех очередей, в которых состоит пользователь, с позицией и
+        прогнозом ожидания в каждой — источник данных экрана «Мои очереди».
+
+
+        Ресурс поддерживает два представления, аналогично
+        `GET /queue/{product_id}/members/me`: обычный запрос возвращает массив
+        JSON, запрос с заголовком `Accept: text/event-stream` — поток
+        Server-Sent Events, передающий тот же массив при каждом изменении.
+        Объект `EventSource` устанавливает заголовок самостоятельно.
+
+
+        Наименования товаров не передаются намеренно: каталог принадлежит
+        AvitoBackend, и Queue Service его не дублирует. Сопоставление
+        `product_id` с карточкой товара выполняет клиентское приложение.
+
+
+        Завершённые членства (`PURCHASED`, `DECLINED`, `SOLD_OUT`) включаются в
+        перечень: исчезновение элемента интерфейса без уведомления не позволяет
+        пользователю установить причину произошедшего. Решение о сокрытии
+        завершённых состояний принимает клиентское приложение.
+      parameters:
+        - name: Accept
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [text/event-stream]
+          description: Переключение ответа в режим Server-Sent Events.
+        - $ref: '#/components/parameters/UserIdQuery'
+      responses:
+        '200':
+          description: >
+            Перечень очередей. В режиме Server-Sent Events то же тело передаётся
+            событием `update` при каждом изменении.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserQueue'
+              example:
+                - product_id: headphones-sennheiser
+                  status: QUEUED
+                  quantity: 1
+                  position: 3
+                  eta_seconds: 225
+                - product_id: console-ps5-slim
+                  status: RIGHT_ACTIVE
+                  token: 9f3a1c7e-58d2-4a11-9f0b-2c6d4e7a1b83
+                  quantity: 1
+                  expires_at: "2026-08-09T17:35:28Z"
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: update
+                data: [{"product_id":"headphones-sennheiser","status":"QUEUED","quantity":1,"position":3,"eta_seconds":225}]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /rights/{token}:
+    get:
+      tags: [rights]
+      operationId: validateRight
+      summary: Проверить действительность права
+      description: >
+        Вызывается браузером покупателя непосредственно перед обращением к
+        AvitoBackend за созданием заказа. Код `200` возвращается исключительно в
+        том случае, если право находится в состоянии `ACTIVE`, не истекло и
+        принадлежит обратившемуся пользователю.
+
+
+        Конечная точка образует первый из двух рубежей защиты от обхода очереди
+        (`FR-C1`, `FR-C2`). Она отсекает недействительные попытки — право
+        принадлежит иному пользователю, истекло, израсходовано либо не
+        существует — до того, как запрос достигнет конечной точки оформления
+        заказа, и тем самым снимает с неё нагрузку.
+
+
+        Рубеж является клиентским и потому не может считаться границей доверия:
+        браузер способен пропустить эту проверку. Границей доверия служит
+        служебная конечная точка `POST /internal/rights/{token}/validate`,
+        вызываемая самой AvitoBackend перед созданием заказа. Пропуск настоящей
+        проверки лишь ухудшает поведение интерфейса, но обойти очередь не
+        позволяет.
+
+
+        Чтение выполняется из кэша Redis; при промахе запись восстанавливается из
+        PostgreSQL, являющегося источником истины.
+      parameters:
+        - $ref: '#/components/parameters/Token'
+      responses:
+        '200':
+          description: Право действует и принадлежит обратившемуся пользователю
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid]
+                properties:
+                  valid:
+                    type: boolean
+                    enum: [true]
+              example:
+                valid: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Право принадлежит иному пользователю
+        '404':
+          description: >
+            Право не существует либо находится в состоянии `EXPIRED` или `USED`.
+            Три случая объединены намеренно: для вызывающей стороны они означают
+            одно и то же, а их различение раскрывало бы сведения о существовании
+            идентификатора.
+
+  /internal/rights/{token}/validate:
+    post:
+      tags: [rights]
+      operationId: validateRightForCheckout
+      summary: Проверить право перед созданием заказа (служебная конечная точка)
+      description: >
+        Вызывается внешней системой AvitoBackend перед созданием заказа и
+        обращением к платёжной подсистеме. Заказ создаётся исключительно при
+        получении кода `204`.
+
+
+        Конечная точка образует границу доверия механики очереди. Клиентская
+        проверка `GET /rights/{token}` выполняется браузером и потому может быть
+        пропущена; настоящая проверка выполняется между двумя службами и
+        пропущена быть не может, вследствие чего именно она обеспечивает
+        невозможность обхода очереди (`FR-C1`, `FR-C2`).
+
+
+        Проверяется, что право находится в состоянии `ACTIVE`, не истекло и
+        выдано именно на указанный товар. Принадлежность пользователю здесь не
+        проверяется: вызывающая сторона является доверенной службой, а не
+        браузером, и не выступает от имени пользователя. Критичной является
+        привязка к товару — без неё действующее право на один товар открывало бы
+        оформление заказа на любой другой.
+      security:
+        - InternalToken: []
+      parameters:
+        - $ref: '#/components/parameters/Token'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id]
+              properties:
+                product_id:
+                  type: string
+                  description: >
+                    Товар, на который создаётся заказ. Пустое значение
+                    отклоняется кодом `400`.
+            example:
+              product_id: console-ps5-slim
+      responses:
+        '204':
+          description: Право действует и выдано на указанный товар
+        '400':
+          description: Тело запроса не разбирается либо `product_id` не передан
+        '401':
+          description: Заголовок `X-Internal-Token` отсутствует или не соответствует секрету
+        '403':
+          description: Право выдано на другой товар
+        '404':
+          description: >
+            Право не существует либо находится в состоянии `EXPIRED` или `USED`.
+
+  /rights/{token}/events:
+    post:
+      tags: [rights]
+      operationId: reportRightEvent
+      summary: Сообщить о событии, связанном с правом (служебная конечная точка)
+      description: >
+        Внешняя система AvitoBackend сообщает о событии, связанном с правом; в
+        настоящей версии поддерживается единственное событие — успешная оплата.
+        Передаётся именно событие, а не требуемое состояние: AvitoBackend не
+        осведомлена о внутренней модели состояний Queue Service и сообщает лишь
+        факт.
+
+
+        Вызов защищён разделяемым секретом в заголовке `X-Internal-Token`. В его
+        отсутствие произвольный субъект мог бы зафиксировать оплату чужого права.
+
+
+        Последствия на стороне Queue Service:
+
+
+        Единой транзакцией PostgreSQL выполняется следующее:
+
+
+        - право переводится в состояние `USED` с фиксацией `order_id`, повторное
+        использование исключается;
+
+        - `product_count` уменьшается на количество, закреплённое за правом;
+
+        - членство переводится в терминальное состояние `PURCHASED`, но лишь при
+        условии, что оно по-прежнему ссылается на оплаченное право; условие
+        исключает воздействие запоздавшего уведомления на состояние, наступившее
+        позднее;
+
+        - в таблицу `stock_decrement_outbox` помещается событие уменьшения
+        остатка, подлежащее доставке в AvitoBackend.
+
+
+        После фиксации транзакции обновляется кэш Redis и продвигается очередь:
+        освободившиеся единицы распределяются следующим участникам, а при
+        исчерпании остатка они получают состояние `SOLD_OUT`.
+
+
+        Уведомление AvitoBackend вызовом `PATCH /products/{product_id}/stock`
+        выполняется не здесь, а отдельным фоновым обработчиком, читающим
+        упомянутую таблицу. Прежняя схема с непосредственным вызовом теряла
+        уведомление при сетевом сбое: оплата уже проведена, а внешняя система о
+        ней не извещена. Событие, зафиксированное той же транзакцией, что и сама
+        оплата, доставляется с повторными попытками и потеряно быть не может.
+
+
+        Обработка идемпотентна: повторное сообщение о ранее учтённой оплате
+        возвращает код `202` и не приводит к повторным внешним воздействиям.
+      security:
+        - InternalToken: []
+      parameters:
+        - $ref: '#/components/parameters/Token'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, order_id]
+              properties:
+                event:
+                  type: string
+                  enum: [payment_succeeded]
+                order_id:
+                  type: string
+            example:
+              event: payment_succeeded
+              order_id: ord_555
+      responses:
+        '202':
+          description: Событие принято к обработке
+        '400':
+          description: >
+            Тело запроса не разбирается либо значение `event` отлично от
+            `payment_succeeded`.
+        '401':
+          description: Заголовок `X-Internal-Token` отсутствует или не соответствует секрету
+        '404':
+          description: Право не существует либо его срок действия истёк
+        '409':
+          description: >
+            Право находится в состоянии, не допускающем оплату, либо физический
+            остаток исчерпан. Во втором случае тело содержит `status: SOLD_OUT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoldOut'
+              example:
+                status: SOLD_OUT
+
+  /seller/products/{product_id}/metrics:
+    get:
+      tags: [seller]
+      operationId: getProductMetrics
+      summary: Показатели аналитики для продавца
+      description: >
+        Отдельная конечная точка для предоставления исторической аналитики продавцам.
+        Позволяет оценить уровень спроса, конверсию выданных прав, количество отказов
+        (включая исчерпание товара и упущенную выгоду), а также временные метрики поведения
+        покупателей.
+
+
+        Аутентификация продавца вынесена за пределы кейса MVP, поэтому
+        конечная точка доступна без проверки токена (security: []).
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Агрегированные аналитические метрики по товару
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductMetrics'
+        '404':
+          description: >
+            Товар сервису неизвестен: очередь по нему ни разу не создавалась,
+            локальное состояние отсутствует.
+
+  /healthz:
+    get:
+      tags: [infra]
+      operationId: healthCheck
+      summary: Контроль работоспособности
+      description: >
+        Размещается вне версионированного префикса: относится к инфраструктурному
+        контролю, а не к прикладному интерфейсу. Используется проверкой состояния
+        контейнера в Docker Compose. Полный адрес — `/healthz`, без префикса
+        `/api/v1`.
+      security: []
+      servers:
+        - url: /
+      responses:
+        '200':
+          description: Служба принимает запросы
+
+components:
+  securitySchemes:
+    UserHeader:
+      type: apiKey
+      in: header
+      name: X-User-Id
+      description: >
+        Идентификатор пользователя. Заменяет полноценную аутентификацию,
+        вынесенную за пределы кейса требованием `FR-D1`.
+    InternalToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+      description: >
+        Разделяемый секрет межсервисного взаимодействия с AvitoBackend. Пустое
+        значение в конфигурации отключает проверку.
+
+  parameters:
+    ProductId:
+      name: product_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+    Token:
+      name: token
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 9f3a1c7e-58d2-4a11-9f0b-2c6d4e7a1b83
+
+    UserIdQuery:
+      name: user_id
+      in: query
+      required: false
+      schema:
+        type: string
+      description: >
+        Способ передачи идентификатора пользователя для каналов WebSocket и
+        Server-Sent Events, где заголовок недоступен. Учитывается исключительно
+        при отсутствии заголовка `X-User-Id`.
+
+  responses:
+    Unauthorized:
+      description: >
+        Идентификатор пользователя не передан ни заголовком `X-User-Id`, ни
+        параметром запроса `user_id`.
+
+    BadRequest:
+      description: >
+        Тело запроса не разбирается либо значение `quantity` меньше либо равно
+        нулю.
+
+  schemas:
+    Membership:
+      type: object
+      description: >
+        Единая форма ответа конечных точек очереди. Набор присутствующих полей
+        определяется значением `status`; неприменимые поля опускаются.
+        Человекочитаемое сообщение отсутствует намеренно — сопоставление
+        состояния с текстом выполняет клиентское приложение.
+
+
+        Применимость полей по состояниям:
+
+
+        | Состояние | Дополнительные поля |
+        | --- | --- |
+        | `RIGHT_ACTIVE` | `token`, `quantity`, `expires_at` |
+        | `OFFER_PENDING` | `quantity`, `available_quantity`, `expires_at` |
+        | `QUEUED` | `quantity`, `position`, `eta_seconds` |
+        | `DECLINED`, `PURCHASED`, `SOLD_OUT` | `quantity` |
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [QUEUED, RIGHT_ACTIVE, OFFER_PENDING, DECLINED, PURCHASED, SOLD_OUT]
+        token:
+          type: string
+          format: uuid
+          description: >
+            Непрозрачное значение UUID. Кодированные данные отсутствуют:
+            принадлежность устанавливается поиском записи права и сравнением её
+            поля `user_id` с идентификатором обратившегося. Присутствует в
+            состоянии `RIGHT_ACTIVE`.
+        quantity:
+          type: integer
+          description: >
+            Количество, закреплённое за правом, — в состоянии `RIGHT_ACTIVE`;
+            изначально запрошенное количество — в прочих состояниях.
+        available_quantity:
+          type: integer
+          description: >
+            Количество, предлагаемое к принятию. Присутствует в состоянии
+            `OFFER_PENDING`.
+        expires_at:
+          type: string
+          format: date-time
+          description: >
+            Момент истечения срока действия права либо предельный момент
+            принятия решения по предложению, UTC.
+        position:
+          type: integer
+          minimum: 1
+          description: >
+            Позиция в очереди, отсчёт с единицы. Присутствует исключительно в
+            состоянии `QUEUED` и исключительно в ответах конечных точек
+            `GET /queue/{product_id}/members/me` и `GET /me/queues`; ответ на
+            `POST` позицию не содержит.
+        eta_seconds:
+          type: integer
+          minimum: 0
+          description: >
+            Прогноз ожидания в секундах: произведение числа предшествующих
+            участников на среднюю длительность оплаты (`AVG_PAYMENT_TIME`).
+            Величина оценочная.
+
+    UserQueue:
+      description: Элемент перечня «Мои очереди» — членство и товар, к которому оно относится.
+      allOf:
+        - $ref: '#/components/schemas/Membership'
+        - type: object
+          required: [product_id]
+          properties:
+            product_id:
+              type: string
+
+    RightActive:
+      type: object
+      required: [status, token, expires_at, quantity]
+      properties:
+        status:
+          type: string
+          enum: [RIGHT_ACTIVE]
+        token:
+          type: string
+          format: uuid
+          description: >
+            Непрозрачное значение UUID. Кодированные данные отсутствуют:
+            принадлежность устанавливается поиском записи права и сравнением её
+            поля `user_id` с идентификатором обратившегося.
+        expires_at:
+          type: string
+          format: date-time
+          description: Момент истечения срока действия права, UTC.
+        quantity:
+          type: integer
+          description: Количество единиц, закреплённое за правом.
+
+    OfferPending:
+      type: object
+      required: [status, quantity, available_quantity, expires_at]
+      properties:
+        status:
+          type: string
+          enum: [OFFER_PENDING]
+        quantity:
+          type: integer
+          description: Изначально запрошенное пользователем количество.
+        available_quantity:
+          type: integer
+          description: Количество, предлагаемое к принятию.
+        expires_at:
+          type: string
+          format: date-time
+          description: Предельный момент принятия решения, UTC.
+
+    Queued:
+      type: object
+      description: >
+        Ответ на вход в очередь, поместивший пользователя в состояние ожидания.
+        Позиция и прогноз ожидания в ответ на `POST` не включаются: они
+        передаются конечными точками `GET /queue/{product_id}/members/me` и
+        `GET /me/queues` (см. схему `Membership`).
+      required: [status, quantity]
+      properties:
+        status:
+          type: string
+          enum: [QUEUED]
+        quantity:
+          type: integer
+          description: Запрошенное количество, ожидающее удовлетворения.
+
+    SoldOut:
+      type: object
+      description: "Терминальное состояние: физический остаток товара исчерпан."
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [SOLD_OUT]
+
+    ProductMetrics:
+      type: object
+      description: >
+        Агрегированные аналитические показатели по товару для дашборда продавца.
+      required:
+        - total_stock
+        - total_contenders
+        - used_rights_count
+        - expired_rights_count
+        - soldout_count
+        - dropoff_count
+        - avg_payment_time
+        - avg_dropoff_time
+      properties:
+        total_stock:
+          type: integer
+          description: Исходное количество товара, заявленное к продаже.
+        total_contenders:
+          type: integer
+          description: Общее число уникальных пользователей, попытавшихся приобрести товар (нажавших кнопку покупки).
+        used_rights_count:
+          type: integer
+          description: Количество прав на покупку, по которым была успешно завершена оплата.
+        expired_rights_count:
+          type: integer
+          description: Количество прав, выданных пользователям, но не оплаченных до истечения срока.
+        soldout_count:
+          type: integer
+          description: Количество пользователей, до которых дошла очередь, но физический остаток товара оказался равен нулю.
+        dropoff_count:
+          type: integer
+          description: Количество пользователей, покинувших очередь до получения права на покупку.
+        avg_payment_time:
+          type: integer
+          description: Среднее время (в секундах), затраченное пользователями на ввод платежных данных.
+        avg_dropoff_time:
+          type: integer
+          description: Среднее время (в секундах), проведенное в очереди пользователями до добровольного отказа.
+      example:
+        total_stock: 10
+        total_contenders: 200
+        used_rights_count: 8
+        expired_rights_count: 2
+        soldout_count: 145
+        dropoff_count: 45
+        avg_payment_time: 75
+        avg_dropoff_time: 120
+    QueueLimitReached:
+      type: object
+      description: >
+        Отказ во входе: пользователь уже участвует в предельном числе очередей.
+        Учитываются только действующие членства; состояния `PURCHASED`,
+        `DECLINED` и `SOLD_OUT` места не занимают.
+      required: [error, limit]
+      properties:
+        error:
+          type: string
+          enum: [queue_limit_reached]
+        limit:
+          type: integer
+          description: >
+            Действующее ограничение. Передаётся для того, чтобы клиентское
+            приложение сообщало значение, не располагая настройками сервиса.
+          example: 5

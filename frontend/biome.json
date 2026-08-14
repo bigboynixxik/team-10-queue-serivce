@@ -1,0 +1,84 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": ["**", "!!coverage", "!!dist", "!!node_modules"]
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "groups": [
+              [":BUN:", ":NODE:", ":PACKAGE_WITH_PROTOCOL:", ":URL:"],
+              ":BLANK_LINE:",
+              [
+                ":PACKAGE:",
+                "!@app",
+                "!@app/**",
+                "!@pages",
+                "!@pages/**",
+                "!@widgets",
+                "!@widgets/**",
+                "!@features",
+                "!@features/**",
+                "!@entities",
+                "!@entities/**",
+                "!@shared",
+                "!@shared/**",
+                "!@ui",
+                "!@ui/**",
+                "!@test",
+                "!@test/**",
+                "!@/**"
+              ],
+              ":BLANK_LINE:",
+              [
+                "@app",
+                "@app/**",
+                "@pages",
+                "@pages/**",
+                "@widgets",
+                "@widgets/**",
+                "@features",
+                "@features/**",
+                "@entities",
+                "@entities/**",
+                "@shared",
+                "@shared/**",
+                "@ui",
+                "@ui/**",
+                "@test",
+                "@test/**",
+                "@/**",
+                ":ALIAS:"
+              ],
+              ":BLANK_LINE:",
+              ":PATH:"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "domains": {
+      "react": "recommended"
+    },
+    "rules": { "preset": "recommended" }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "semicolons": "always"
+    }
+  }
+}

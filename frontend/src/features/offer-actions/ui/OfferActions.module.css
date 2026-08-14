@@ -1,0 +1,14 @@
+.OfferActions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.OfferActions__buttons {
+  display: flex;
+  gap: 12px;
+}
+
+.OfferActions__buttons > * {
+  flex: 1;
+}

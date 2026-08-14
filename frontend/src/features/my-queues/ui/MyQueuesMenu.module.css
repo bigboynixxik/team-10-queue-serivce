@@ -1,0 +1,87 @@
+.MyQueuesMenu {
+  position: relative;
+}
+
+.MyQueuesMenu__trigger {
+  width: 40px;
+  padding-inline: 8px;
+}
+
+.MyQueuesMenu__icon {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 20px;
+}
+
+.MyQueuesMenu__icon span {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: currentcolor;
+}
+
+.MyQueuesMenu__dropdown {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(360px, calc(100vw - 32px));
+  padding: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 12px 28px rgb(31 41 51 / 16%);
+}
+
+.MyQueuesMenu__title {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.MyQueuesMenu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.MyQueuesMenu__message {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+}
+
+.MyQueuesMenu__queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.MyQueuesMenu__queue-position {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.MyQueuesMenu__queue:hover,
+.MyQueuesMenu__queue:focus-visible {
+  background: #f1f5f9;
+}
+
+.MyQueuesMenu__queue:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
