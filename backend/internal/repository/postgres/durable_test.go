@@ -184,7 +184,7 @@ func (s *RepoTestSuite) TestIssueRightAndUpsertMembershipTx_Success() {
 	`, "prod-1", "user-1").Scan(&token, &createdAt)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), right.Token, token)
-	require.Equal(s.T(), now, createdAt)
+	require.True(s.T(), now.Equal(createdAt))
 
 	storedRight, err := s.repo.GetRightByToken(s.ctx, right.Token)
 	require.NoError(s.T(), err)
@@ -248,7 +248,7 @@ func (s *RepoTestSuite) TestUpsertMembership() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), string(models.MembershipStatusOfferPending), status)
 	require.Equal(s.T(), 1, *availQty)
-	require.Equal(s.T(), rejoinedAt, createdAt)
+	require.True(s.T(), rejoinedAt.Equal(createdAt))
 }
 
 // TestSaveInitialStock validates idempotency when saving the initial stock multiple times.
